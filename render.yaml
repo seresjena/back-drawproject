@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: arquidraw-backend
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: JAVA_TOOL_OPTIONS
+        value: -Xmx384m
+      - key: MCP_SERVER_NAME
+        value: arquidraw
+      - key: MCP_SERVER_VERSION
+        value: 0.1.0

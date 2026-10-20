@@ -1,0 +1,36 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.1'
+}
+
+group = 'app.arquidraw'
+version = '0.1.0'
+description = 'ArquiDraw backend: servidor MCP (Streamable HTTP) + WebSocket en vivo'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Gestiona las versiones de Spring Boot 4.1.1
+    implementation platform('org.springframework.boot:spring-boot-dependencies:4.1.1')
+
+    // Web (para el endpoint MCP y CORS) y WebSocket (para el editor en vivo)
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+
+    // Servidor MCP sobre Streamable HTTP (Spring AI 2.0.1 -> MCP Java SDK 2.x)
+    implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webmvc:2.0.1'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

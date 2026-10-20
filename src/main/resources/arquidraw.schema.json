@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arquidraw.app/schema/arquidraw.schema.json",
+  "title": "ArquiDraw Project File",
+  "description": "Contrato del archivo de proyecto de ArquiDraw (.adraw / .json). Define toda la estructura necesaria para importar/exportar diagramas y para que agentes externos (p. ej. via MCP) puedan leer y escribir diagramas. Compatible por version a traves del campo 'version'.",
+  "oneOf": [
+    { "$ref": "#/$defs/ArquiDrawFile" },
+    { "$ref": "#/$defs/DiagramData" }
+  ],
+  "$defs": {
+    "ArquiDrawFile": {
+      "title": "ArquiDrawFile",
+      "type": "object",
+      "description": "Envoltorio de proyecto. Es el contenido de los archivos .adraw y .json exportados por ArquiDraw.",
+      "required": ["format", "version", "diagram"],
+      "additionalProperties": true,
+      "properties": {
+        "format": {
+          "const": "arquidraw",
+          "description": "Identificador del formato. Siempre 'arquidraw'."
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Version del contrato. Actual: 1. Se incrementa ante cambios incompatibles."
+        },
+        "type": {
+          "enum": ["diagram"],
+          "default": "diagram",
+          "description": "Tipo de payload contenido."
+        },
+        "diagram": { "$ref": "#/$defs/DiagramData" }
+      }
+    },
+
+    "DiagramData": {
+      "title": "DiagramData",
+      "type": "object",
+      "description": "Diagrama completo.",
+      "required": ["name", "background", "gridSize", "nodes", "connections"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Nombre del diagrama (se muestra en la barra superior y se usa como nombre de archivo al exportar)."
+        },
+        "background": {
+          "$ref": "#/$defs/BackgroundStyle"
+        },
+        "gridSize": {
+          "type": "number",
+          "minimum": 6,
+          "maximum": 200,
+          "default": 22,
+          "description": "Tamano de la cuadricula en unidades del mundo (para el ajuste/snap)."
+        },
+        "nodes": {
+          "type": "array",
+          "description": "Componentes del diagrama.",
+          "items": { "$ref": "#/$defs/DiagramNode" }
+        },
+        "connections": {
+          "type": "array",
+          "description": "Lineas/conexiones entre componentes.",
+          "items": { "$ref": "#/$defs/DiagramConnection" }
+        }
+      }
+    },
+
+    "DiagramNode": {
+      "title": "DiagramNode",
+      "type": "object",
+      "description": "Un componente. Su forma, colores, icono y texto provienen de un preset de la paleta (ver NODE_PRESETS) y pueden editarse.",
+      "required": ["id", "x", "y", "width", "height", "label", "sublabel", "shape", "fill", "stroke", "textColor", "icon", "ports"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "description": "Identificador unico del nodo." },
+        "x": { "type": "number", "description": "Coordenada X de la esquina superior izquierda (unidades del mundo)." },
+        "y": { "type": "number", "description": "Coordenada Y de la esquina superior izquierda (unidades del mundo)." },
+        "width": { "type": "number", "minimum": 1 },
+        "height": { "type": "number", "minimum": 1 },
+        "label": { "type": "string", "description": "Nombre principal del componente." },
+        "sublabel": { "type": "string", "description": "Subnombre / descripcion secundaria. Puede ser vacio." },
+        "summary": { "type": "string", "description": "Resumen de que hace el componente (descripcion del servicio). Puede ser vacio." },
+        "shape": { "$ref": "#/$defs/NodeShape" },
+        "fill": { "$ref": "#/$defs/Color", "description": "Color de relleno (hex, p. ej. '#e6efff')." },
+        "stroke": { "$ref": "#/$defs/Color", "description": "Color del borde." },
+        "textColor": { "$ref": "#/$defs/Color", "description": "Color del texto." },
+        "icon": {
+          "type": "string",
+          "description": "Clave del icono (ver NODE_ICONS en palette.ts). Cadena vacia si no tiene icono.",
+          "examples": ["user", "client", "mobile", "browser", "server", "api", "database", "cache", "queue", "stream", "cloud", "loadbalancer", "gateway", "storage", "function", "external", "start", "process", "decision", "document", "actor", "router", "bus", ""]
+        },
+        "ports": {
+          "type": "array",
+          "description": "Lados por los que el componente permite conectarse.",
+          "items": { "$ref": "#/$defs/PortSide" },
+          "uniqueItems": true
+        }
+      }
+    },
+
+    "DiagramConnection": {
+      "title": "DiagramConnection",
+      "type": "object",
+      "description": "Una conexion (linea) entre dos componentes.",
+      "required": ["id", "from", "to", "label", "routing", "stroke", "animation", "arrow", "color", "width"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "description": "Identificador unico de la conexion." },
+        "from": { "$ref": "#/$defs/PortRef" },
+        "to": { "$ref": "#/$defs/PortRef" },
+        "label": { "type": "string", "description": "Etiqueta sobre la linea. Puede ser vacio." },
+        "routing": { "$ref": "#/$defs/LineRouting" },
+        "stroke": { "$ref": "#/$defs/LineStroke" },
+        "animation": { "$ref": "#/$defs/FlowAnimation" },
+        "arrow": { "$ref": "#/$defs/ArrowMode" },
+        "color": { "$ref": "#/$defs/Color", "description": "Color de la linea y de la flecha." },
+        "width": { "type": "number", "minimum": 1, "description": "Grosor de la linea en px." }
+      }
+    },
+
+    "PortRef": {
+      "title": "PortRef",
+      "type": "object",
+      "description": "Extremo de una conexion: a que nodo y a que lado se conecta.",
+      "required": ["nodeId", "side"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId": { "type": "string" },
+        "side": { "$ref": "#/$defs/PortSideOrAuto" }
+      }
+    },
+
+    "BackgroundStyle": {
+      "title": "BackgroundStyle",
+      "enum": ["grid", "dots", "none"],
+      "description": "Fondo del lienzo: cuadricula, puntos o liso."
+    },
+
+    "NodeShape": {
+      "title": "NodeShape",
+      "enum": ["rectangle", "rounded", "pill", "circle", "diamond", "hexagon", "cylinder"],
+      "description": "Forma geometrica del componente."
+    },
+
+    "LineRouting": {
+      "title": "LineRouting",
+      "enum": ["straight", "curve", "orthogonal"],
+      "description": "Recorrido de la linea: recta, curva o en angulos rectos (ortogonal)."
+    },
+
+    "LineStroke": {
+      "title": "LineStroke",
+      "enum": ["solid", "dashed", "dotted"],
+      "description": "Tipo de trazo: continua, discontinua o punteada."
+    },
+
+    "FlowAnimation": {
+      "title": "FlowAnimation",
+      "enum": ["none", "dash", "dots", "pulse"],
+      "description": "Animacion de flujo de la linea: ninguna, guiones en movimiento, puntos viajando o pulso."
+    },
+
+    "ArrowMode": {
+      "title": "ArrowMode",
+      "enum": ["end", "both", "none"],
+      "description": "Flechas: al final, en ambos extremos o ninguna."
+    },
+
+    "PortSide": {
+      "title": "PortSide",
+      "enum": ["top", "right", "bottom", "left"],
+      "description": "Lado del componente."
+    },
+
+    "PortSideOrAuto": {
+      "title": "PortSideOrAuto",
+      "enum": ["top", "right", "bottom", "left", "auto"],
+      "description": "Lado del componente, o 'auto' para que ArquiDraw elija el lado mas cercano."
+    },
+
+    "Color": {
+      "type": "string",
+      "description": "Color en formato CSS (hexadecimal recomendado, p. ej. '#5b8def')."
+    }
+  }
+}
