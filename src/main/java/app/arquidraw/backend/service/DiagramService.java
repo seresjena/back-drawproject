@@ -7,6 +7,7 @@ import app.arquidraw.backend.model.NodePreset;
 import app.arquidraw.backend.model.NodePresets;
 import app.arquidraw.backend.model.Point;
 import app.arquidraw.backend.model.PortRef;
+import app.arquidraw.backend.model.ViewRequest;
 import app.arquidraw.backend.model.Viewport;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -100,6 +101,18 @@ public class DiagramService {
     }
 
     /** Resalta ids sin cambiar el diagrama (para que el usuario vea que "mira" el agente). */
+    /**
+     * Pide al editor conectado cambiar su vista (zoom/centro) sin tocar el diagrama.
+     * Sin zoom, el editor encuadra todo el contenido.
+     */
+    public void setView(String origin, Double zoom, Double centerX, Double centerY) {
+        if (zoom != null && (zoom < 0.15 || zoom > 4)) {
+            throw new IllegalArgumentException("zoom fuera de rango (0.15 a 4): " + zoom);
+        }
+        events.publishEvent(new DiagramViewEvent(new ViewRequest(zoom, centerX, centerY),
+                origin == null ? ORIGIN_SERVER : origin, room));
+    }
+
     public synchronized void focus(String origin, List<String> ids) {
         List<String> clean = ids == null ? List.of() : ids;
         events.publishEvent(new DiagramFocusEvent(clean, origin == null ? ORIGIN_SERVER : origin, room));
@@ -331,130 +344,20 @@ public class DiagramService {
     }
 
     /**
-     * Recoloca todos los nodos en capas por niveles (estilo Sugiyama simplificado),
-     * ordenando cada capa por baricentro para reducir cruces. Equivale al boton
-     * "Organizar" del editor. Devuelve los nodos con la posicion nueva.
+     * Recoloca todos los nodos en capas (ver {@link AutoLayout}: rompe ciclos y agrupa
+     * por rol). Equivale al boton "Organizar" del editor. Devuelve los nodos con la
+     * posicion nueva.
      */
-    public List<DiagramNode> autoLayout(String origin, String direction, Double layerGap, Double nodeGap) {
+    public List<DiagramNode> autoLayout(String origin, String direction, Double layerGap, Double nodeGap,
+            Boolean byRole) {
         DiagramData d = repository.load();
         List<DiagramNode> nodes = d.nodes();
         if (nodes.isEmpty()) {
             return List.of();
         }
-        boolean tb = direction != null && direction.equalsIgnoreCase("TB");
-        double lg = layerGap != null ? Math.max(layerGap, 80) : 90;
-        double ng = nodeGap != null ? Math.max(nodeGap, 44) : 46;
-        double start = 60;
-
-        Map<String, DiagramNode> byId = new HashMap<>();
-        List<String> ids = new ArrayList<>();
-        for (DiagramNode n : nodes) {
-            byId.put(n.id(), n);
-            ids.add(n.id());
-        }
-        Map<String, List<String>> preds = new HashMap<>();
-        Map<String, List<String>> succs = new HashMap<>();
-        for (String id : ids) {
-            preds.put(id, new ArrayList<>());
-            succs.put(id, new ArrayList<>());
-        }
-        for (DiagramConnection c : d.connections()) {
-            String a = c.from().nodeId();
-            String b = c.to().nodeId();
-            if (a == null || b == null || a.equals(b) || !byId.containsKey(a) || !byId.containsKey(b)) {
-                continue;
-            }
-            succs.get(a).add(b);
-            preds.get(b).add(a);
-        }
-
-        // Niveles = camino mas largo desde las fuentes (tolera ciclos por limite).
-        Map<String, Integer> level = new HashMap<>();
-        for (String id : ids) {
-            level.put(id, 0);
-        }
-        for (int it = 0; it <= ids.size(); it++) {
-            boolean changed = false;
-            for (String id : ids) {
-                for (String p : preds.get(id)) {
-                    int cand = level.get(p) + 1;
-                    if (cand > level.get(id)) {
-                        level.put(id, cand);
-                        changed = true;
-                    }
-                }
-            }
-            if (!changed) {
-                break;
-            }
-        }
-
-        int maxLevel = 0;
-        for (String id : ids) {
-            maxLevel = Math.max(maxLevel, level.get(id));
-        }
-        List<List<String>> layers = new ArrayList<>();
-        for (int i = 0; i <= maxLevel; i++) {
-            layers.add(new ArrayList<>());
-        }
-        for (String id : ids) {
-            layers.get(level.get(id)).add(id);
-        }
-
-        // Orden por baricentro dentro de cada capa (dos barridos).
-        Map<String, Integer> indexOf = new HashMap<>();
-        for (List<String> layer : layers) {
-            for (int i = 0; i < layer.size(); i++) {
-                indexOf.put(layer.get(i), i);
-            }
-        }
-        for (int sweep = 0; sweep < 2; sweep++) {
-            for (List<String> layer : layers) {
-                layer.sort((a, b) -> Double.compare(
-                        barycenter(a, preds, succs, indexOf),
-                        barycenter(b, preds, succs, indexOf)));
-                for (int i = 0; i < layer.size(); i++) {
-                    indexOf.put(layer.get(i), i);
-                }
-            }
-        }
-
-        int cols = layers.size();
-        double[] colWidth = new double[cols];
-        double[] colHeight = new double[cols];
-        for (int i = 0; i < cols; i++) {
-            double w = 0;
-            double h = 0;
-            List<String> layer = layers.get(i);
-            for (int j = 0; j < layer.size(); j++) {
-                double[] s = size(byId.get(layer.get(j)), tb);
-                w = Math.max(w, s[0]);
-                h += s[1] + (j > 0 ? ng : 0);
-            }
-            colWidth[i] = w;
-            colHeight[i] = h;
-        }
-        double totalHeight = 0;
-        for (double ch : colHeight) {
-            totalHeight = Math.max(totalHeight, ch);
-        }
-        double[] colX = new double[cols];
-        double x = start;
-        for (int i = 0; i < cols; i++) {
-            colX[i] = x;
-            x += colWidth[i] + lg;
-        }
-
-        Map<String, double[]> result = new HashMap<>();
-        for (int ci = 0; ci < cols; ci++) {
-            double y = start + (totalHeight - colHeight[ci]) / 2;
-            for (String id : layers.get(ci)) {
-                double[] s = size(byId.get(id), tb);
-                double px = colX[ci] + (colWidth[ci] - s[0]) / 2;
-                result.put(id, tb ? new double[] { y, px } : new double[] { px, y });
-                y += s[1] + ng;
-            }
-        }
+        Map<String, double[]> result = AutoLayout.compute(nodes, d.connections(), direction, layerGap, nodeGap,
+                byRole);
+        List<String> ids = new ArrayList<>(result.keySet());
 
         List<DiagramNode> updated = new ArrayList<>();
         for (DiagramNode n : nodes) {
@@ -468,26 +371,6 @@ public class DiagramService {
         mutate(origin, diag -> new DiagramData(diag.name(), diag.background(), diag.gridSize(),
                 updated, diag.connections()), ids);
         return updated;
-    }
-
-    private static double[] size(DiagramNode n, boolean tb) {
-        return tb ? new double[] { n.height(), n.width() } : new double[] { n.width(), n.height() };
-    }
-
-    private static double barycenter(String id, Map<String, List<String>> preds,
-            Map<String, List<String>> succs, Map<String, Integer> indexOf) {
-        List<String> list = preds.get(id);
-        if (list == null || list.isEmpty()) {
-            list = succs.get(id);
-        }
-        if (list == null || list.isEmpty()) {
-            return indexOf.getOrDefault(id, 0);
-        }
-        double sum = 0;
-        for (String n : list) {
-            sum += indexOf.getOrDefault(n, 0);
-        }
-        return sum / list.size();
     }
 
     // ------------------------------------------------------------------ conexiones

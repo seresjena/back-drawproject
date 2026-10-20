@@ -1,0 +1,91 @@
+{
+ "description": "Ciclo a -> b -> c -> a mas un nodo aislado: 3 capas sin huecos",
+ "options": {},
+ "diagram": {
+  "nodes": [
+   {
+    "id": "a",
+    "x": 0,
+    "y": 0,
+    "width": 150,
+    "height": 60,
+    "icon": "",
+    "shape": "rounded"
+   },
+   {
+    "id": "b",
+    "x": 0,
+    "y": 0,
+    "width": 120,
+    "height": 80,
+    "icon": "",
+    "shape": "rounded"
+   },
+   {
+    "id": "c",
+    "x": 0,
+    "y": 0,
+    "width": 150,
+    "height": 60,
+    "icon": "",
+    "shape": "rounded"
+   },
+   {
+    "id": "d",
+    "x": 0,
+    "y": 0,
+    "width": 100,
+    "height": 40,
+    "icon": "",
+    "shape": "rounded"
+   }
+  ],
+  "connections": [
+   {
+    "id": "c0",
+    "from": {
+     "nodeId": "a"
+    },
+    "to": {
+     "nodeId": "b"
+    }
+   },
+   {
+    "id": "c1",
+    "from": {
+     "nodeId": "b"
+    },
+    "to": {
+     "nodeId": "c"
+    }
+   },
+   {
+    "id": "c2",
+    "from": {
+     "nodeId": "c"
+    },
+    "to": {
+     "nodeId": "a"
+    }
+   }
+  ]
+ },
+ "expected": {
+  "a": [
+   60,
+   60
+  ],
+  "d": [
+   85,
+   166
+  ],
+  "b": [
+   300,
+   93
+  ],
+  "c": [
+   510,
+   103
+  ]
+ }
+}

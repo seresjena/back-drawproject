@@ -3,6 +3,7 @@ package app.arquidraw.backend.web;
 import app.arquidraw.backend.model.Viewport;
 import app.arquidraw.backend.service.DiagramChangedEvent;
 import app.arquidraw.backend.service.DiagramFocusEvent;
+import app.arquidraw.backend.service.DiagramViewEvent;
 import app.arquidraw.backend.service.DiagramService;
 import app.arquidraw.backend.service.RoomManager;
 import java.io.IOException;
@@ -114,6 +115,11 @@ public class DiagramWsHandler extends TextWebSocketHandler {
             return;
         }
         broadcast(WsServerMessage.highlight(event.ids(), event.origin()), event.room());
+    }
+
+    @EventListener
+    public void onDiagramView(DiagramViewEvent event) {
+        broadcast(WsServerMessage.view(event.view(), event.origin()), event.room());
     }
 
     /** Reenvia a las sesiones de una misma sala. */

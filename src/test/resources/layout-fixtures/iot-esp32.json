@@ -1,0 +1,727 @@
+{
+ "description": "Arquitectura IoT real con ciclo (comandos -> broker -> ingesta -> bus -> reglas -> comandos)",
+ "options": {},
+ "diagram": {
+  "nodes": [
+   {
+    "id": "n-69d030da",
+    "x": -370,
+    "y": -200,
+    "width": 190,
+    "height": 84,
+    "icon": "client",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-954227f1",
+    "x": -420,
+    "y": 60,
+    "width": 190,
+    "height": 84,
+    "icon": "mobile",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-93f05e46",
+    "x": -370,
+    "y": 240,
+    "width": 190,
+    "height": 84,
+    "icon": "browser",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-528ee5f8",
+    "x": -80,
+    "y": 790,
+    "width": 190,
+    "height": 96,
+    "icon": "router",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-53397eb6",
+    "x": 190,
+    "y": 630,
+    "width": 190,
+    "height": 90,
+    "icon": "router",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-19fc3c68",
+    "x": 450,
+    "y": 810,
+    "width": 190,
+    "height": 90,
+    "icon": "queue",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-5882c72b",
+    "x": -50,
+    "y": 60,
+    "width": 190,
+    "height": 84,
+    "icon": "cloud",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-9a89764e",
+    "x": 240,
+    "y": 110,
+    "width": 190,
+    "height": 90,
+    "icon": "gateway",
+    "shape": "hexagon"
+   },
+   {
+    "id": "n-55978dd8",
+    "x": 540,
+    "y": -170,
+    "width": 190,
+    "height": 90,
+    "icon": "user",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-94bcea10",
+    "x": 580,
+    "y": 120,
+    "width": 190,
+    "height": 84,
+    "icon": "stream",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-9a1f8cf3",
+    "x": 820,
+    "y": 416,
+    "width": 190,
+    "height": 84,
+    "icon": "queue",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-213f8663",
+    "x": 820,
+    "y": 532,
+    "width": 190,
+    "height": 84,
+    "icon": "process",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-bce9ba99",
+    "x": 820,
+    "y": -60,
+    "width": 190,
+    "height": 84,
+    "icon": "user",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-216055eb",
+    "x": 1330,
+    "y": 40,
+    "width": 190,
+    "height": 84,
+    "icon": "server",
+    "shape": "rectangle"
+   },
+   {
+    "id": "n-db75afe4",
+    "x": 1080,
+    "y": 200,
+    "width": 190,
+    "height": 84,
+    "icon": "process",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-d9a086a6",
+    "x": 1080,
+    "y": 388,
+    "width": 190,
+    "height": 84,
+    "icon": "function",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-657c03b7",
+    "x": 1080,
+    "y": 504,
+    "width": 190,
+    "height": 84,
+    "icon": "cloud",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-865e4dda",
+    "x": 1080,
+    "y": 620,
+    "width": 190,
+    "height": 84,
+    "icon": "function",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-bb82638d",
+    "x": 870,
+    "y": 800,
+    "width": 190,
+    "height": 84,
+    "icon": "storage",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-03be5c5f",
+    "x": 2250,
+    "y": -100,
+    "width": 190,
+    "height": 84,
+    "icon": "stream",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-3e7bca15",
+    "x": 2280,
+    "y": 160,
+    "width": 160,
+    "height": 100,
+    "icon": "database",
+    "shape": "cylinder"
+   },
+   {
+    "id": "n-99c578b2",
+    "x": 1480,
+    "y": -280,
+    "width": 160,
+    "height": 80,
+    "icon": "cache",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-7b752386",
+    "x": 2280,
+    "y": 40,
+    "width": 160,
+    "height": 100,
+    "icon": "database",
+    "shape": "cylinder"
+   },
+   {
+    "id": "n-9a203cf8",
+    "x": 1620,
+    "y": 940,
+    "width": 160,
+    "height": 80,
+    "icon": "storage",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-e55cee67",
+    "x": 1890,
+    "y": 690,
+    "width": 180,
+    "height": 84,
+    "icon": "cloud",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-b0a856f0",
+    "x": 1890,
+    "y": 550,
+    "width": 180,
+    "height": 84,
+    "icon": "cloud",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-15408cda",
+    "x": 1470,
+    "y": -170,
+    "width": 180,
+    "height": 84,
+    "icon": "cloud",
+    "shape": "rounded"
+   },
+   {
+    "id": "n-96779f4a",
+    "x": 1890,
+    "y": 420,
+    "width": 180,
+    "height": 84,
+    "icon": "stream",
+    "shape": "rounded"
+   }
+  ],
+  "connections": [
+   {
+    "id": "c-3e51157f",
+    "from": {
+     "nodeId": "n-69d030da"
+    },
+    "to": {
+     "nodeId": "n-5882c72b"
+    }
+   },
+   {
+    "id": "c-1df1e7de",
+    "from": {
+     "nodeId": "n-954227f1"
+    },
+    "to": {
+     "nodeId": "n-5882c72b"
+    }
+   },
+   {
+    "id": "c-e55aa320",
+    "from": {
+     "nodeId": "n-93f05e46"
+    },
+    "to": {
+     "nodeId": "n-5882c72b"
+    }
+   },
+   {
+    "id": "c-2cc7a97a",
+    "from": {
+     "nodeId": "n-5882c72b"
+    },
+    "to": {
+     "nodeId": "n-9a89764e"
+    }
+   },
+   {
+    "id": "c-c48952df",
+    "from": {
+     "nodeId": "n-9a89764e"
+    },
+    "to": {
+     "nodeId": "n-55978dd8"
+    }
+   },
+   {
+    "id": "c-8adc4320",
+    "from": {
+     "nodeId": "n-9a89764e"
+    },
+    "to": {
+     "nodeId": "n-bce9ba99"
+    }
+   },
+   {
+    "id": "c-95482780",
+    "from": {
+     "nodeId": "n-9a89764e"
+    },
+    "to": {
+     "nodeId": "n-216055eb"
+    }
+   },
+   {
+    "id": "c-99fdd3d9",
+    "from": {
+     "nodeId": "n-9a89764e"
+    },
+    "to": {
+     "nodeId": "n-db75afe4"
+    }
+   },
+   {
+    "id": "c-9b6eef56",
+    "from": {
+     "nodeId": "n-9a89764e"
+    },
+    "to": {
+     "nodeId": "n-d9a086a6"
+    }
+   },
+   {
+    "id": "c-26645032",
+    "from": {
+     "nodeId": "n-9a89764e"
+    },
+    "to": {
+     "nodeId": "n-865e4dda"
+    }
+   },
+   {
+    "id": "c-37ff8e41",
+    "from": {
+     "nodeId": "n-9a89764e"
+    },
+    "to": {
+     "nodeId": "n-03be5c5f"
+    }
+   },
+   {
+    "id": "c-3c03b39a",
+    "from": {
+     "nodeId": "n-9a89764e"
+    },
+    "to": {
+     "nodeId": "n-bb82638d"
+    }
+   },
+   {
+    "id": "c-137b0bc2",
+    "from": {
+     "nodeId": "n-55978dd8"
+    },
+    "to": {
+     "nodeId": "n-bce9ba99"
+    }
+   },
+   {
+    "id": "c-f14ce178",
+    "from": {
+     "nodeId": "n-55978dd8"
+    },
+    "to": {
+     "nodeId": "n-99c578b2"
+    }
+   },
+   {
+    "id": "c-67b7bf16",
+    "from": {
+     "nodeId": "n-55978dd8"
+    },
+    "to": {
+     "nodeId": "n-15408cda"
+    }
+   },
+   {
+    "id": "c-61193dd7",
+    "from": {
+     "nodeId": "n-bce9ba99"
+    },
+    "to": {
+     "nodeId": "n-3e7bca15"
+    }
+   },
+   {
+    "id": "c-dd76ba8a",
+    "from": {
+     "nodeId": "n-216055eb"
+    },
+    "to": {
+     "nodeId": "n-3e7bca15"
+    }
+   },
+   {
+    "id": "c-018897f1",
+    "from": {
+     "nodeId": "n-216055eb"
+    },
+    "to": {
+     "nodeId": "n-213f8663"
+    }
+   },
+   {
+    "id": "c-c6a7d92f",
+    "from": {
+     "nodeId": "n-213f8663"
+    },
+    "to": {
+     "nodeId": "n-3e7bca15"
+    }
+   },
+   {
+    "id": "c-1ef59220",
+    "from": {
+     "nodeId": "n-213f8663"
+    },
+    "to": {
+     "nodeId": "n-19fc3c68"
+    }
+   },
+   {
+    "id": "c-1e8ca55b",
+    "from": {
+     "nodeId": "n-528ee5f8"
+    },
+    "to": {
+     "nodeId": "n-53397eb6"
+    }
+   },
+   {
+    "id": "c-60eedc74",
+    "from": {
+     "nodeId": "n-528ee5f8"
+    },
+    "to": {
+     "nodeId": "n-19fc3c68"
+    }
+   },
+   {
+    "id": "c-a1c47da5",
+    "from": {
+     "nodeId": "n-53397eb6"
+    },
+    "to": {
+     "nodeId": "n-19fc3c68"
+    }
+   },
+   {
+    "id": "c-b5b65782",
+    "from": {
+     "nodeId": "n-19fc3c68"
+    },
+    "to": {
+     "nodeId": "n-94bcea10"
+    }
+   },
+   {
+    "id": "c-25d0bbd1",
+    "from": {
+     "nodeId": "n-94bcea10"
+    },
+    "to": {
+     "nodeId": "n-9a1f8cf3"
+    }
+   },
+   {
+    "id": "c-0495af54",
+    "from": {
+     "nodeId": "n-94bcea10"
+    },
+    "to": {
+     "nodeId": "n-7b752386"
+    }
+   },
+   {
+    "id": "c-93c9b61a",
+    "from": {
+     "nodeId": "n-9a1f8cf3"
+    },
+    "to": {
+     "nodeId": "n-db75afe4"
+    }
+   },
+   {
+    "id": "c-8bc28b97",
+    "from": {
+     "nodeId": "n-9a1f8cf3"
+    },
+    "to": {
+     "nodeId": "n-657c03b7"
+    }
+   },
+   {
+    "id": "c-52c6a7f1",
+    "from": {
+     "nodeId": "n-9a1f8cf3"
+    },
+    "to": {
+     "nodeId": "n-03be5c5f"
+    }
+   },
+   {
+    "id": "c-abc88341",
+    "from": {
+     "nodeId": "n-db75afe4"
+    },
+    "to": {
+     "nodeId": "n-d9a086a6"
+    }
+   },
+   {
+    "id": "c-69d8a748",
+    "from": {
+     "nodeId": "n-db75afe4"
+    },
+    "to": {
+     "nodeId": "n-3e7bca15"
+    }
+   },
+   {
+    "id": "c-dfccd1f4",
+    "from": {
+     "nodeId": "n-d9a086a6"
+    },
+    "to": {
+     "nodeId": "n-19fc3c68"
+    }
+   },
+   {
+    "id": "c-5f991d00",
+    "from": {
+     "nodeId": "n-657c03b7"
+    },
+    "to": {
+     "nodeId": "n-b0a856f0"
+    }
+   },
+   {
+    "id": "c-7998f815",
+    "from": {
+     "nodeId": "n-865e4dda"
+    },
+    "to": {
+     "nodeId": "n-e55cee67"
+    }
+   },
+   {
+    "id": "c-bd73daa8",
+    "from": {
+     "nodeId": "n-865e4dda"
+    },
+    "to": {
+     "nodeId": "n-3e7bca15"
+    }
+   },
+   {
+    "id": "c-13be3abe",
+    "from": {
+     "nodeId": "n-bb82638d"
+    },
+    "to": {
+     "nodeId": "n-9a203cf8"
+    }
+   },
+   {
+    "id": "c-378f5340",
+    "from": {
+     "nodeId": "n-bb82638d"
+    },
+    "to": {
+     "nodeId": "n-19fc3c68"
+    }
+   },
+   {
+    "id": "c-53ced634",
+    "from": {
+     "nodeId": "n-03be5c5f"
+    },
+    "to": {
+     "nodeId": "n-7b752386"
+    }
+   },
+   {
+    "id": "c-006af3d4",
+    "from": {
+     "nodeId": "n-9a1f8cf3"
+    },
+    "to": {
+     "nodeId": "n-96779f4a"
+    }
+   }
+  ]
+ },
+ "expected": {
+  "n-69d030da": [
+   60,
+   180
+  ],
+  "n-954227f1": [
+   60,
+   310
+  ],
+  "n-93f05e46": [
+   60,
+   440
+  ],
+  "n-528ee5f8": [
+   60,
+   570
+  ],
+  "n-5882c72b": [
+   340,
+   313
+  ],
+  "n-53397eb6": [
+   340,
+   443
+  ],
+  "n-9a89764e": [
+   620,
+   378
+  ],
+  "n-55978dd8": [
+   900,
+   183
+  ],
+  "n-216055eb": [
+   900,
+   319
+  ],
+  "n-bb82638d": [
+   900,
+   449
+  ],
+  "n-865e4dda": [
+   900,
+   579
+  ],
+  "n-99c578b2": [
+   1195,
+   60
+  ],
+  "n-15408cda": [
+   1185,
+   186
+  ],
+  "n-bce9ba99": [
+   1180,
+   316
+  ],
+  "n-213f8663": [
+   1180,
+   446
+  ],
+  "n-9a203cf8": [
+   1195,
+   576
+  ],
+  "n-e55cee67": [
+   1185,
+   702
+  ],
+  "n-19fc3c68": [
+   1460,
+   378
+  ],
+  "n-94bcea10": [
+   1740,
+   381
+  ],
+  "n-9a1f8cf3": [
+   2020,
+   381
+  ],
+  "n-03be5c5f": [
+   2300,
+   186
+  ],
+  "n-db75afe4": [
+   2300,
+   316
+  ],
+  "n-657c03b7": [
+   2300,
+   446
+  ],
+  "n-96779f4a": [
+   2305,
+   576
+  ],
+  "n-7b752386": [
+   2595,
+   170
+  ],
+  "n-d9a086a6": [
+   2580,
+   316
+  ],
+  "n-b0a856f0": [
+   2585,
+   446
+  ],
+  "n-3e7bca15": [
+   2595,
+   576
+  ]
+ }
+}

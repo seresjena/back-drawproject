@@ -1,0 +1,148 @@
+{
+ "description": "Diagrama de flujo arriba-abajo con bucle de reintento y tamanos distintos",
+ "options": {
+  "direction": "TB",
+  "layerGap": 100,
+  "nodeGap": 50
+ },
+ "diagram": {
+  "nodes": [
+   {
+    "id": "inicio",
+    "x": 0,
+    "y": 0,
+    "width": 120,
+    "height": 50,
+    "icon": "start",
+    "shape": "pill"
+   },
+   {
+    "id": "validar",
+    "x": 0,
+    "y": 0,
+    "width": 160,
+    "height": 70,
+    "icon": "process",
+    "shape": "rounded"
+   },
+   {
+    "id": "ok",
+    "x": 0,
+    "y": 0,
+    "width": 120,
+    "height": 120,
+    "icon": "decision",
+    "shape": "diamond"
+   },
+   {
+    "id": "guardar",
+    "x": 0,
+    "y": 0,
+    "width": 150,
+    "height": 60,
+    "icon": "database",
+    "shape": "cylinder"
+   },
+   {
+    "id": "error",
+    "x": 0,
+    "y": 0,
+    "width": 140,
+    "height": 60,
+    "icon": "process",
+    "shape": "rounded"
+   },
+   {
+    "id": "fin",
+    "x": 0,
+    "y": 0,
+    "width": 120,
+    "height": 50,
+    "icon": "start",
+    "shape": "pill"
+   }
+  ],
+  "connections": [
+   {
+    "id": "c0",
+    "from": {
+     "nodeId": "inicio"
+    },
+    "to": {
+     "nodeId": "validar"
+    }
+   },
+   {
+    "id": "c1",
+    "from": {
+     "nodeId": "validar"
+    },
+    "to": {
+     "nodeId": "ok"
+    }
+   },
+   {
+    "id": "c2",
+    "from": {
+     "nodeId": "ok"
+    },
+    "to": {
+     "nodeId": "guardar"
+    }
+   },
+   {
+    "id": "c3",
+    "from": {
+     "nodeId": "ok"
+    },
+    "to": {
+     "nodeId": "error"
+    }
+   },
+   {
+    "id": "c4",
+    "from": {
+     "nodeId": "error"
+    },
+    "to": {
+     "nodeId": "validar"
+    }
+   },
+   {
+    "id": "c5",
+    "from": {
+     "nodeId": "guardar"
+    },
+    "to": {
+     "nodeId": "fin"
+    }
+   }
+  ]
+ },
+ "expected": {
+  "inicio": [
+   170,
+   60
+  ],
+  "validar": [
+   150,
+   210
+  ],
+  "ok": [
+   170,
+   380
+  ],
+  "guardar": [
+   60,
+   600
+  ],
+  "error": [
+   260,
+   600
+  ],
+  "fin": [
+   170,
+   760
+  ]
+ }
+}
