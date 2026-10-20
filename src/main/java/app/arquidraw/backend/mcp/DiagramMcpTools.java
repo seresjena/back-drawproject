@@ -132,6 +132,7 @@ public class DiagramMcpTools {
     public DiagramNode addNode(
             @McpToolParam(description = "Texto principal del componente", required = true) String label,
             @McpToolParam(description = "Texto secundario / descripcion", required = false) String sublabel,
+            @McpToolParam(description = "Tecnologia principal (p. ej. Node.js, PostgreSQL, Kafka)", required = false) String technology,
             @McpToolParam(description = "Resumen de que hace el componente (descripcion del servicio)", required = false) String summary,
             @McpToolParam(description = "Key del preset (p. ej. client, server, database, queue)", required = false) String preset,
             @McpToolParam(description = "Coordenada X (esquina superior izquierda)", required = false) Double x,
@@ -144,8 +145,8 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Color del borde (hex)", required = false) String stroke,
             @McpToolParam(description = "Color del texto (hex)", required = false) String textColor,
             @McpToolParam(description = "Lados conectables: top, right, bottom, left", required = false) List<String> ports) {
-        return svc().addNode(ORIGIN, label, sublabel, summary, preset, x, y, width, height, shape,
-                icon, fill, stroke, textColor, ports);
+        return svc().addNode(ORIGIN, label, sublabel, technology, summary, preset, x, y, width, height,
+                shape, icon, fill, stroke, textColor, ports);
     }
 
     @McpTool(name = "update_node", description = "Modifica un componente existente. Solo cambia los campos indicados.")
@@ -153,6 +154,7 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Id del nodo", required = true) String id,
             @McpToolParam(description = "Nuevo texto principal", required = false) String label,
             @McpToolParam(description = "Nuevo texto secundario", required = false) String sublabel,
+            @McpToolParam(description = "Nueva tecnologia principal", required = false) String technology,
             @McpToolParam(description = "Nuevo resumen", required = false) String summary,
             @McpToolParam(description = "Nueva X", required = false) Double x,
             @McpToolParam(description = "Nueva Y", required = false) Double y,
@@ -164,8 +166,8 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Nuevo borde", required = false) String stroke,
             @McpToolParam(description = "Nuevo color de texto", required = false) String textColor,
             @McpToolParam(description = "Nuevos lados conectables", required = false) List<String> ports) {
-        return svc().updateNode(ORIGIN, id, label, sublabel, summary, x, y, width, height, shape,
-                icon, fill, stroke, textColor, ports);
+        return svc().updateNode(ORIGIN, id, label, sublabel, technology, summary, x, y, width, height,
+                shape, icon, fill, stroke, textColor, ports);
     }
 
     @McpTool(name = "move_node", description = "Mueve un componente a una posicion (esquina superior izquierda).")
@@ -203,6 +205,7 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Ids de los nodos", required = true) List<String> ids,
             @McpToolParam(description = "Nuevo texto principal", required = false) String label,
             @McpToolParam(description = "Nuevo texto secundario", required = false) String sublabel,
+            @McpToolParam(description = "Nueva tecnologia principal", required = false) String technology,
             @McpToolParam(description = "Nuevo resumen", required = false) String summary,
             @McpToolParam(description = "Nueva X", required = false) Double x,
             @McpToolParam(description = "Nueva Y", required = false) Double y,
@@ -214,8 +217,8 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Nuevo borde", required = false) String stroke,
             @McpToolParam(description = "Nuevo color de texto", required = false) String textColor,
             @McpToolParam(description = "Nuevos lados conectables", required = false) List<String> ports) {
-        return svc().updateNodes(ORIGIN, ids, label, sublabel, summary, x, y, width, height, shape,
-                icon, fill, stroke, textColor, ports);
+        return svc().updateNodes(ORIGIN, ids, label, sublabel, technology, summary, x, y, width, height,
+                shape, icon, fill, stroke, textColor, ports);
     }
 
     @McpTool(name = "duplicate_node", description = "Duplica un componente (nuevo id) desplazado un offset. Por defecto 30,30.")

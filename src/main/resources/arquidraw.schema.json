@@ -81,6 +81,7 @@
         "height": { "type": "number", "minimum": 1 },
         "label": { "type": "string", "description": "Nombre principal del componente." },
         "sublabel": { "type": "string", "description": "Subnombre / descripcion secundaria. Puede ser vacio." },
+        "technology": { "type": "string", "description": "Tecnologia principal del componente (p. ej. Node.js, PostgreSQL, Kafka). Puede ser vacio." },
         "summary": { "type": "string", "description": "Resumen de que hace el componente (descripcion del servicio). Puede ser vacio." },
         "shape": { "$ref": "#/$defs/NodeShape" },
         "fill": { "$ref": "#/$defs/Color", "description": "Color de relleno (hex, p. ej. '#e6efff')." },

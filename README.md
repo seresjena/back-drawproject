@@ -77,8 +77,9 @@ reducir los cruces de líneas; equivale al botón **Organizar** del editor. Son 
 conectado, `viewport` (tamaño del lienzo en px, `zoom`, `panX`, `panY`) y `visibleWorld` (región del
 mundo visible). Así un agente sabe **dónde colocar** el siguiente nodo para que se vea en pantalla.
 
-Los nodos incluyen `summary`: un resumen de qué hace el componente. `add_node`, `update_node` y
-`update_nodes` lo aceptan (parámetro `summary`) y se devuelve en `get_node`/`list_nodes`/`get_diagram`.
+Los nodos incluyen `technology` (tecnología principal) y `summary` (qué hace el componente).
+`add_node`, `update_node` y `update_nodes` aceptan ambos parámetros y se devuelven en
+`get_node`/`list_nodes`/`get_diagram`.
 
 Cada mutación incrementa la `revision` del diagrama y se difunde por WebSocket. Las mutaciones
 informan además los **ids que tocaron** (`highlight`) y `focus_nodes` señala ids sin cambiar

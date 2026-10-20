@@ -134,9 +134,9 @@ public class DiagramService {
 
     // ------------------------------------------------------------------ nodos
 
-    public DiagramNode addNode(String origin, String label, String sublabel, String summary,
-            String presetKey, Double x, Double y, Double width, Double height, String shape, String icon,
-            String fill, String stroke, String textColor, List<String> ports) {
+    public DiagramNode addNode(String origin, String label, String sublabel, String technology,
+            String summary, String presetKey, Double x, Double y, Double width, Double height, String shape,
+            String icon, String fill, String stroke, String textColor, List<String> ports) {
 
         DiagramData d = repository.load();
         NodePreset preset = NodePresets.find(presetKey);
@@ -158,6 +158,7 @@ public class DiagramService {
         DiagramNode node = new DiagramNode(id, pos[0], pos[1], w, h,
                 (label == null || label.isBlank()) ? preset.label() : label,
                 sublabel == null ? "" : sublabel,
+                technology == null ? "" : technology,
                 summary == null ? "" : summary,
                 sh, fi, st, tc, ic, p);
 
@@ -167,33 +168,33 @@ public class DiagramService {
     }
 
     public DiagramNode updateNode(String origin, String id, String label, String sublabel,
-            String summary, Double x, Double y, Double width, Double height, String shape, String icon,
-            String fill, String stroke, String textColor, List<String> ports) {
+            String technology, String summary, Double x, Double y, Double width, Double height,
+            String shape, String icon, String fill, String stroke, String textColor, List<String> ports) {
 
-        DiagramNode updated = patchNode(origin, id, label, sublabel, summary, x, y, width, height,
-                shape, icon, fill, stroke, textColor, ports);
+        DiagramNode updated = patchNode(origin, id, label, sublabel, technology, summary, x, y, width,
+                height, shape, icon, fill, stroke, textColor, ports);
         return updated;
     }
 
     /** Aplica el mismo patch a varios nodos a la vez (estilo/serie). */
     public List<DiagramNode> updateNodes(String origin, List<String> ids, String label, String sublabel,
-            String summary, Double x, Double y, Double width, Double height, String shape, String icon,
-            String fill, String stroke, String textColor, List<String> ports) {
+            String technology, String summary, Double x, Double y, Double width, Double height,
+            String shape, String icon, String fill, String stroke, String textColor, List<String> ports) {
 
         if (ids == null || ids.isEmpty()) {
             throw new IllegalArgumentException("Indica al menos un id.");
         }
         List<DiagramNode> result = new ArrayList<>();
         for (String id : ids) {
-            result.add(patchNode(origin, id, label, sublabel, summary, x, y, width, height, shape, icon,
-                    fill, stroke, textColor, ports));
+            result.add(patchNode(origin, id, label, sublabel, technology, summary, x, y, width, height,
+                    shape, icon, fill, stroke, textColor, ports));
         }
         return result;
     }
 
     private DiagramNode patchNode(String origin, String id, String label, String sublabel,
-            String summary, Double x, Double y, Double width, Double height, String shape, String icon,
-            String fill, String stroke, String textColor, List<String> ports) {
+            String technology, String summary, Double x, Double y, Double width, Double height,
+            String shape, String icon, String fill, String stroke, String textColor, List<String> ports) {
 
         DiagramData d = repository.load();
         DiagramNode existing = d.node(id);
@@ -208,6 +209,7 @@ public class DiagramService {
                 height != null ? height : existing.height(),
                 label != null ? label : existing.label(),
                 sublabel != null ? sublabel : existing.sublabel(),
+                technology != null ? technology : existing.technology(),
                 summary != null ? summary : existing.summary(),
                 shape != null ? shape : existing.shape(),
                 fill != null ? fill : existing.fill(),
@@ -222,11 +224,13 @@ public class DiagramService {
     }
 
     public DiagramNode moveNode(String origin, String id, double x, double y) {
-        return updateNode(origin, id, null, null, null, x, y, null, null, null, null, null, null, null, null);
+        return updateNode(origin, id, null, null, null, null, x, y, null, null, null, null, null, null,
+                null, null);
     }
 
     public DiagramNode resizeNode(String origin, String id, double width, double height) {
-        return updateNode(origin, id, null, null, null, null, null, width, height, null, null, null, null, null, null);
+        return updateNode(origin, id, null, null, null, null, null, null, width, height, null, null, null,
+                null, null, null);
     }
 
     /** Duplica un nodo (nuevo id) desplazado un offset. */
@@ -240,8 +244,8 @@ public class DiagramService {
         double dy = offsetY != null ? offsetY : 30;
         DiagramNode clone = new DiagramNode(newId("n"), existing.x() + dx, existing.y() + dy,
                 existing.width(), existing.height(), existing.label(), existing.sublabel(),
-                existing.summary(), existing.shape(), existing.fill(), existing.stroke(),
-                existing.textColor(), existing.icon(), existing.ports());
+                existing.technology(), existing.summary(), existing.shape(), existing.fill(),
+                existing.stroke(), existing.textColor(), existing.icon(), existing.ports());
 
         mutate(origin, diag -> new DiagramData(diag.name(), diag.background(), diag.gridSize(),
                 append(diag.nodes(), clone), diag.connections()), List.of(clone.id()));

@@ -19,6 +19,6 @@ public record NodePreset(
         return new DiagramNode(id, x, y, width, height,
                 label == null || label.isBlank() ? this.label : label,
                 sublabel == null ? "" : sublabel,
-                shape, fill, stroke, textColor, icon, java.util.List.of("left", "right"));
+                "", shape, fill, stroke, textColor, icon, java.util.List.of("left", "right"));
     }
 }
