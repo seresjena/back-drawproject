@@ -72,7 +72,7 @@ WebSocket. Sin token, opera sobre la sala `DEFAULT` (monousuario).
 | Intercambio | `import_diagram`, `export_diagram` |
 
 `auto_layout` ordena todo el diagrama en capas por niveles (clientes → servicios → datos) para
-reducir los cruces de líneas; equivale al botón **Organizar** del editor. Son **36** herramientas.
+reducir los cruces de líneas; equivale al botón **Organizar** del editor. Son **37** herramientas.
 Los niveles internos se leen/escriben con una `path` de ids de nodos (`get_level`, `replace_level`);
 `create_level` genera portales de entrada/salida a partir de las conexiones del nodo padre.
 
