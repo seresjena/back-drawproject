@@ -1,6 +1,7 @@
 package app.arquidraw.backend.model;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Diagrama completo. Espejo de DiagramData en arquidraw.schema.json
@@ -11,7 +12,8 @@ public record DiagramData(
         String background,
         double gridSize,
         List<DiagramNode> nodes,
-        List<DiagramConnection> connections) {
+        List<DiagramConnection> connections,
+        Map<String, DiagramData> levels) {
 
     public static final String DEFAULT_NAME = "Sin titulo";
     public static final String DEFAULT_BACKGROUND = "grid";
@@ -23,10 +25,21 @@ public record DiagramData(
         gridSize = gridSize <= 0 ? DEFAULT_GRID : gridSize;
         nodes = nodes == null ? List.of() : List.copyOf(nodes);
         connections = connections == null ? List.of() : List.copyOf(connections);
+        levels = levels == null ? Map.of() : Map.copyOf(levels);
+    }
+
+    /** Compatibilidad con llamadas que aun no gestionan niveles internos. */
+    public DiagramData(String name, String background, double gridSize, List<DiagramNode> nodes,
+            List<DiagramConnection> connections) {
+        this(name, background, gridSize, nodes, connections, Map.of());
     }
 
     public static DiagramData empty() {
         return new DiagramData(DEFAULT_NAME, DEFAULT_BACKGROUND, DEFAULT_GRID, List.of(), List.of());
+    }
+
+    public DiagramData level(String id) {
+        return id == null ? null : levels.get(id);
     }
 
     public DiagramNode node(String id) {

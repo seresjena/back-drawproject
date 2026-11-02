@@ -22,7 +22,7 @@
         "version": {
           "type": "integer",
           "minimum": 1,
-          "description": "Version del contrato. Actual: 1. Se incrementa ante cambios incompatibles."
+          "description": "Version del contrato. Actual: 2. Se incrementa ante cambios incompatibles."
         },
         "type": {
           "enum": ["diagram"],
@@ -63,6 +63,11 @@
           "type": "array",
           "description": "Lineas/conexiones entre componentes.",
           "items": { "$ref": "#/$defs/DiagramConnection" }
+        },
+        "levels": {
+          "type": "object",
+          "description": "Subdiagramas internos indexados por el childLevelId de un nodo. Hasta 3 niveles en total.",
+          "additionalProperties": { "$ref": "#/$defs/DiagramData" }
         }
       }
     },
@@ -97,7 +102,33 @@
           "description": "Lados por los que el componente permite conectarse.",
           "items": { "$ref": "#/$defs/PortSide" },
           "uniqueItems": true
+        },
+        "childLevelId": {
+          "type": "string",
+          "description": "Clave en DiagramData.levels con el contenido interno de este componente."
+        },
+        "portal": {
+          "$ref": "#/$defs/DiagramPortal"
         }
+      }
+    },
+
+    "DiagramPortal": {
+      "title": "DiagramPortal",
+      "type": "object",
+      "description": "Marca un nodo como entrada/salida del nivel interno hacia el nodo padre.",
+      "required": ["direction"],
+      "additionalProperties": false,
+      "properties": {
+        "direction": {
+          "enum": ["in", "out"],
+          "description": "Entrada (viene del nivel superior) o salida (va al nivel superior)."
+        },
+        "connectionId": {
+          "type": "string",
+          "description": "Conexion externa del nodo padre que origino el portal automatico."
+        },
+        "side": { "$ref": "#/$defs/PortSideOrAuto" }
       }
     },
 

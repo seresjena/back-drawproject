@@ -9,6 +9,7 @@ import app.arquidraw.backend.model.Point;
 import app.arquidraw.backend.model.Viewport;
 import app.arquidraw.backend.service.DiagramService;
 import app.arquidraw.backend.service.RoomManager;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -338,6 +339,68 @@ public class DiagramMcpTools {
         return svc().reverseConnection(ORIGIN, id);
     }
 
+    // ------------------------------------------------------------------ niveles internos
+
+    @McpTool(name = "list_levels", annotations = @McpTool.McpAnnotations(readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false), description = "Lista los niveles internos del diagrama (hasta 3 niveles), con la ruta de ids que hay que pasar a get_level/replace_level.")
+    public List<Map<String, Object>> listLevels() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        collectLevels(svc().current(), List.of(), 1, out);
+        return out;
+    }
+
+    @McpTool(name = "get_level", annotations = @McpTool.McpAnnotations(readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false), description = "Devuelve el contenido de un nivel interno. 'path' es la lista de ids de nodos desde la raiz (ver list_levels).")
+    public DiagramData getLevel(
+            @McpToolParam(description = "Ids de nodos desde la raiz hasta el nivel interno", required = true) List<String> path) {
+        return svc().level(path);
+    }
+
+    @McpTool(name = "create_level", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false, idempotentHint = true, openWorldHint = false), description = "Crea el nivel interno de un componente (maximo 3 niveles). Genera portales de entrada/salida segun sus conexiones externas.")
+    public DiagramData createLevel(
+            @McpToolParam(description = "Id del nodo contenedor", required = true) String nodeId,
+            @McpToolParam(description = "Nombre del nivel (por defecto, el del nodo)", required = false) String name,
+            @McpToolParam(description = "Ruta de ids hasta el nivel que contiene el nodo (vacia = raiz)", required = false) List<String> path) {
+        DiagramData result = svc().createLevel(ORIGIN, path == null ? List.of() : path, nodeId, name);
+        svc().focus(ORIGIN, List.of(nodeId));
+        return result;
+    }
+
+    @McpTool(name = "remove_level", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = true, idempotentHint = true, openWorldHint = false), description = "Elimina el nivel interno de un componente y todo su contenido.")
+    public DiagramData removeLevel(
+            @McpToolParam(description = "Id del nodo contenedor", required = true) String nodeId,
+            @McpToolParam(description = "Ruta de ids hasta el nivel que contiene el nodo (vacia = raiz)", required = false) List<String> path) {
+        return svc().removeLevel(ORIGIN, path == null ? List.of() : path, nodeId);
+    }
+
+    @McpTool(name = "replace_level", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = true, idempotentHint = true, openWorldHint = false), description = "Reemplaza el contenido de un nivel interno con un DiagramData completo (nodos, conexiones y subniveles).")
+    public DiagramData replaceLevel(
+            @McpToolParam(description = "Ids de nodos desde la raiz hasta el nivel interno", required = true) List<String> path,
+            @McpToolParam(description = "DiagramData del nivel", required = true) Map<String, Object> data) {
+        DiagramData level = mapper.convertValue(data, DiagramData.class);
+        return svc().replaceLevel(ORIGIN, path, level);
+    }
+
+    private void collectLevels(DiagramData level, List<String> path, int depth,
+            List<Map<String, Object>> out) {
+        for (DiagramNode node : level.nodes()) {
+            String childId = node.childLevelId();
+            DiagramData child = childId == null || childId.isBlank() ? null : level.level(childId);
+            if (child == null) {
+                continue;
+            }
+            List<String> childPath = new ArrayList<>(path);
+            childPath.add(node.id());
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("path", childPath);
+            item.put("nodeId", node.id());
+            item.put("label", node.label());
+            item.put("depth", depth + 1);
+            item.put("nodeCount", child.nodes().size());
+            item.put("connectionCount", child.connections().size());
+            out.add(item);
+            collectLevels(child, childPath, depth + 1, out);
+        }
+    }
+
     // ------------------------------------------------------------------ import/export
 
     @McpTool(name = "import_diagram", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = true, idempotentHint = true, openWorldHint = false), description = "Reemplaza el diagrama completo. Acepta el contenido de un archivo .adraw/.json (con o sin envoltorio {format,version,diagram}).")
@@ -358,7 +421,7 @@ public class DiagramMcpTools {
     private Map<String, Object> arquiDrawFile(DiagramData data) {
         Map<String, Object> file = new LinkedHashMap<>();
         file.put("format", "arquidraw");
-        file.put("version", 1);
+        file.put("version", 2);
         file.put("type", "diagram");
         file.put("diagram", data);
         return file;

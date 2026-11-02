@@ -20,7 +20,9 @@ public record DiagramNode(
         String stroke,
         String textColor,
         String icon,
-        List<String> ports) {
+        List<String> ports,
+        String childLevelId,
+        DiagramPortal portal) {
 
     public static final String DEFAULT_SHAPE = "rounded";
     public static final String DEFAULT_FILL = "#ffffff";
@@ -39,6 +41,17 @@ public record DiagramNode(
         textColor = (textColor == null || textColor.isBlank()) ? DEFAULT_TEXT : textColor;
         icon = icon == null ? "" : icon;
         ports = ports == null ? List.of() : List.copyOf(ports);
+        childLevelId = childLevelId == null ? "" : childLevelId;
+    }
+
+    /**
+     * Constructor sin nivel interno ni portal (compatibilidad con llamadas antiguas).
+     */
+    public DiagramNode(String id, double x, double y, double width, double height, String label,
+            String sublabel, String technology, String summary, String shape, String fill, String stroke,
+            String textColor, String icon, List<String> ports) {
+        this(id, x, y, width, height, label, sublabel, technology, summary, shape, fill, stroke,
+                textColor, icon, ports, null, null);
     }
 
     /**
@@ -48,7 +61,7 @@ public record DiagramNode(
             String sublabel, String summary, String shape, String fill, String stroke, String textColor,
             String icon, List<String> ports) {
         this(id, x, y, width, height, label, sublabel, "", summary, shape, fill, stroke, textColor, icon,
-                ports);
+                ports, null, null);
     }
 
     /**
@@ -58,31 +71,41 @@ public record DiagramNode(
             String sublabel, String shape, String fill, String stroke, String textColor, String icon,
             List<String> ports) {
         this(id, x, y, width, height, label, sublabel, "", "", shape, fill, stroke, textColor, icon,
-                ports);
+                ports, null, null);
     }
 
     public DiagramNode movedTo(double nx, double ny) {
         return new DiagramNode(id, nx, ny, width, height, label, sublabel, technology, summary, shape,
-                fill, stroke, textColor, icon, ports);
+                fill, stroke, textColor, icon, ports, childLevelId, portal);
     }
 
     public DiagramNode resizedTo(double nw, double nh) {
         return new DiagramNode(id, x, y, nw, nh, label, sublabel, technology, summary, shape, fill,
-                stroke, textColor, icon, ports);
+                stroke, textColor, icon, ports, childLevelId, portal);
     }
 
     public DiagramNode relabeled(String newLabel, String newSublabel) {
         return new DiagramNode(id, x, y, width, height, newLabel, newSublabel, technology, summary,
-                shape, fill, stroke, textColor, icon, ports);
+                shape, fill, stroke, textColor, icon, ports, childLevelId, portal);
     }
 
     public DiagramNode withSummary(String newSummary) {
         return new DiagramNode(id, x, y, width, height, label, sublabel, technology, newSummary, shape,
-                fill, stroke, textColor, icon, ports);
+                fill, stroke, textColor, icon, ports, childLevelId, portal);
     }
 
     public DiagramNode withTechnology(String newTechnology) {
         return new DiagramNode(id, x, y, width, height, label, sublabel, newTechnology, summary, shape,
-                fill, stroke, textColor, icon, ports);
+                fill, stroke, textColor, icon, ports, childLevelId, portal);
+    }
+
+    public DiagramNode withChildLevel(String levelId) {
+        return new DiagramNode(id, x, y, width, height, label, sublabel, technology, summary, shape,
+                fill, stroke, textColor, icon, ports, levelId, portal);
+    }
+
+    public DiagramNode withPortal(DiagramPortal newPortal) {
+        return new DiagramNode(id, x, y, width, height, label, sublabel, technology, summary, shape,
+                fill, stroke, textColor, icon, ports, childLevelId, newPortal);
     }
 }

@@ -3,6 +3,7 @@ package app.arquidraw.backend.service;
 import app.arquidraw.backend.model.DiagramConnection;
 import app.arquidraw.backend.model.DiagramData;
 import app.arquidraw.backend.model.DiagramNode;
+import app.arquidraw.backend.model.DiagramPortal;
 import app.arquidraw.backend.model.NodePreset;
 import app.arquidraw.backend.model.NodePresets;
 import app.arquidraw.backend.model.Point;
@@ -142,7 +143,7 @@ public class DiagramService {
     }
 
     public DiagramData clear(String origin) {
-        return mutate(origin, d -> new DiagramData(d.name(), d.background(), d.gridSize(), List.of(), List.of()));
+        return mutate(origin, d -> copy(d).nodes(List.of()).connections(List.of()).levels(Map.of()).build());
     }
 
     // ------------------------------------------------------------------ nodos
@@ -175,8 +176,7 @@ public class DiagramService {
                 summary == null ? "" : summary,
                 sh, fi, st, tc, ic, p);
 
-        mutate(origin, diag -> new DiagramData(diag.name(), diag.background(), diag.gridSize(),
-                append(diag.nodes(), node), diag.connections()), List.of(id));
+        mutate(origin, diag -> copy(diag).nodes(append(diag.nodes(), node)).connections(diag.connections()).build(), List.of(id));
         return node;
     }
 
@@ -231,8 +231,7 @@ public class DiagramService {
                 icon != null ? icon : existing.icon(),
                 ports != null ? ports : existing.ports());
 
-        mutate(origin, diag -> new DiagramData(diag.name(), diag.background(), diag.gridSize(),
-                replaceNodeList(diag.nodes(), updated), diag.connections()), List.of(id));
+        mutate(origin, diag -> copy(diag).nodes(replaceNodeList(diag.nodes(), updated)).connections(diag.connections()).build(), List.of(id));
         return updated;
     }
 
@@ -258,11 +257,54 @@ public class DiagramService {
         DiagramNode clone = new DiagramNode(newId("n"), existing.x() + dx, existing.y() + dy,
                 existing.width(), existing.height(), existing.label(), existing.sublabel(),
                 existing.technology(), existing.summary(), existing.shape(), existing.fill(),
-                existing.stroke(), existing.textColor(), existing.icon(), existing.ports());
+                existing.stroke(), existing.textColor(), existing.icon(), existing.ports(),
+                null, existing.portal());
+        Map<String, DiagramData> levels = new HashMap<>(d.levels());
+        if (existing.childLevelId() != null && !existing.childLevelId().isBlank()) {
+            DiagramData child = d.level(existing.childLevelId());
+            if (child != null) {
+                String childId = newId("lv");
+                clone = clone.withChildLevel(childId);
+                levels.put(childId, cloneLevel(child));
+            }
+        }
+        DiagramNode result = clone;
+        mutate(origin, diag -> copy(diag).nodes(append(diag.nodes(), result))
+                .connections(diag.connections()).levels(levels).build(), List.of(result.id()));
+        return result;
+    }
 
-        mutate(origin, diag -> new DiagramData(diag.name(), diag.background(), diag.gridSize(),
-                append(diag.nodes(), clone), diag.connections()), List.of(clone.id()));
-        return clone;
+    /** Clona un nivel completo con ids nuevos (para duplicar contenedores). */
+    private static DiagramData cloneLevel(DiagramData level) {
+        Map<String, String> ids = new HashMap<>();
+        Map<String, DiagramData> levels = new HashMap<>();
+        List<DiagramNode> nodes = new ArrayList<>();
+        for (DiagramNode n : level.nodes()) {
+            String id = newId("n");
+            ids.put(n.id(), id);
+            DiagramNode copy = new DiagramNode(id, n.x(), n.y(), n.width(), n.height(), n.label(),
+                    n.sublabel(), n.technology(), n.summary(), n.shape(), n.fill(), n.stroke(),
+                    n.textColor(), n.icon(), n.ports(), null, n.portal());
+            if (n.childLevelId() != null && !n.childLevelId().isBlank()) {
+                DiagramData child = level.level(n.childLevelId());
+                if (child != null) {
+                    String childId = newId("lv");
+                    copy = copy.withChildLevel(childId);
+                    levels.put(childId, cloneLevel(child));
+                }
+            }
+            nodes.add(copy);
+        }
+        List<DiagramConnection> connections = new ArrayList<>();
+        for (DiagramConnection c : level.connections()) {
+            connections.add(new DiagramConnection(newId("c"),
+                    new PortRef(ids.getOrDefault(c.from().nodeId(), c.from().nodeId()),
+                            c.from().side()),
+                    new PortRef(ids.getOrDefault(c.to().nodeId(), c.to().nodeId()), c.to().side()),
+                    c.label(), c.routing(), c.stroke(), c.animation(), c.arrow(), c.color(),
+                    c.width(), c.waypoints()));
+        }
+        return copy(level).nodes(nodes).connections(connections).levels(levels).build();
     }
 
     public void removeNode(String origin, String id) {
@@ -275,11 +317,18 @@ public class DiagramService {
         }
         Set<String> set = new LinkedHashSet<>(ids);
         mutate(origin, d -> {
+            List<DiagramNode> removed = d.nodes().stream().filter(n -> set.contains(n.id())).toList();
             List<DiagramNode> nodes = d.nodes().stream().filter(n -> !set.contains(n.id())).toList();
             List<DiagramConnection> conns = d.connections().stream()
                     .filter(c -> !set.contains(c.from().nodeId()) && !set.contains(c.to().nodeId()))
                     .toList();
-            return new DiagramData(d.name(), d.background(), d.gridSize(), nodes, conns);
+            Map<String, DiagramData> levels = new HashMap<>(d.levels());
+            for (DiagramNode node : removed) {
+                if (node.childLevelId() != null && !node.childLevelId().isBlank()) {
+                    levels.remove(node.childLevelId());
+                }
+            }
+            return copy(d).nodes(nodes).connections(conns).levels(levels).build();
         });
     }
 
@@ -299,8 +348,7 @@ public class DiagramService {
             case "backward" -> list.add(Math.max(i - 1, 0), node);
             default -> list.add(node); // front
         }
-        mutate(origin, diag -> new DiagramData(diag.name(), diag.background(), diag.gridSize(),
-                List.copyOf(list), diag.connections()), List.of(id));
+        mutate(origin, diag -> copy(diag).nodes(List.copyOf(list)).connections(diag.connections()).build(), List.of(id));
         return node;
     }
 
@@ -338,8 +386,7 @@ public class DiagramService {
             updated.add(next);
         }
         List<DiagramNode> nextNodes = replaceNodeList(d.nodes(), updated);
-        mutate(origin, diag -> new DiagramData(diag.name(), diag.background(), diag.gridSize(),
-                nextNodes, diag.connections()), new ArrayList<>(set));
+        mutate(origin, diag -> copy(diag).nodes(nextNodes).connections(diag.connections()).build(), new ArrayList<>(set));
         return updated;
     }
 
@@ -368,8 +415,7 @@ public class DiagramService {
                 updated.add(n.movedTo(Math.round(p[0]), Math.round(p[1])));
             }
         }
-        mutate(origin, diag -> new DiagramData(diag.name(), diag.background(), diag.gridSize(),
-                updated, diag.connections()), ids);
+        mutate(origin, diag -> copy(diag).nodes(updated).connections(diag.connections()).build(), ids);
         return updated;
     }
 
@@ -389,8 +435,7 @@ public class DiagramService {
                 new PortRef(toId, toSide), label, routing, stroke, animation, arrow, color,
                 width == null ? 0 : width, waypoints);
 
-        mutate(origin, diag -> new DiagramData(diag.name(), diag.background(), diag.gridSize(),
-                diag.nodes(), append(diag.connections(), c)), List.of(c.id()));
+        mutate(origin, diag -> copy(diag).nodes(diag.nodes()).connections(append(diag.connections(), c)).build(), List.of(c.id()));
         return c;
     }
 
@@ -437,8 +482,7 @@ public class DiagramService {
                 width != null ? width : existing.width(),
                 waypoints != null ? waypoints : existing.waypoints());
 
-        mutate(origin, diag -> new DiagramData(diag.name(), diag.background(), diag.gridSize(),
-                diag.nodes(), replaceConnList(diag.connections(), updated)), List.of(id));
+        mutate(origin, diag -> copy(diag).nodes(diag.nodes()).connections(replaceConnList(diag.connections(), updated)).build(), List.of(id));
         return updated;
     }
 
@@ -464,8 +508,7 @@ public class DiagramService {
                 existing.label(), existing.routing(), existing.stroke(), existing.animation(),
                 existing.arrow(), existing.color(), existing.width(), existing.waypoints());
 
-        mutate(origin, diag -> new DiagramData(diag.name(), diag.background(), diag.gridSize(),
-                diag.nodes(), replaceConnList(diag.connections(), updated)), List.of(id));
+        mutate(origin, diag -> copy(diag).nodes(diag.nodes()).connections(replaceConnList(diag.connections(), updated)).build(), List.of(id));
         return updated;
     }
 
@@ -479,8 +522,7 @@ public class DiagramService {
         DiagramConnection updated = new DiagramConnection(existing.id(), existing.to(), existing.from(),
                 existing.label(), existing.routing(), existing.stroke(), existing.animation(),
                 existing.arrow(), existing.color(), existing.width(), existing.waypoints());
-        mutate(origin, diag -> new DiagramData(diag.name(), diag.background(), diag.gridSize(),
-                diag.nodes(), replaceConnList(diag.connections(), updated)), List.of(id));
+        mutate(origin, diag -> copy(diag).nodes(diag.nodes()).connections(replaceConnList(diag.connections(), updated)).build(), List.of(id));
         return updated;
     }
 
@@ -493,8 +535,142 @@ public class DiagramService {
             throw new IllegalArgumentException("Indica al menos un id.");
         }
         Set<String> set = new LinkedHashSet<>(ids);
-        mutate(origin, d -> new DiagramData(d.name(), d.background(), d.gridSize(), d.nodes(),
-                d.connections().stream().filter(c -> !set.contains(c.id())).toList()));
+        mutate(origin, d -> copy(d).connections(
+                d.connections().stream().filter(c -> !set.contains(c.id())).toList()).build());
+    }
+
+    // ------------------------------------------------------------------ niveles internos
+
+    /** Devuelve el nivel interno indicado por la ruta de ids de nodos (vacia = raiz). */
+    public DiagramData level(List<String> path) {
+        return resolveLevel(current(), path);
+    }
+
+    /** Crea (si falta) el nivel interno de un nodo en el nivel indicado por 'path'. */
+    public DiagramData createLevel(String origin, List<String> path, String nodeId, String name) {
+        if (path != null && path.size() >= 2) {
+            throw new IllegalArgumentException("Solo se permiten 3 niveles.");
+        }
+        return mutate(origin, root -> updateLevelAt(root, path, level -> {
+            DiagramNode node = level.node(nodeId);
+            if (node == null) {
+                throw new NoSuchElementException("No existe el nodo: " + nodeId);
+            }
+            if (node.childLevelId() != null && !node.childLevelId().isBlank()
+                    && level.level(node.childLevelId()) != null) {
+                return level;
+            }
+            String childId = newId("lv");
+            DiagramData child = buildInterior(node, level,
+                    name == null || name.isBlank() ? node.label() : name);
+            DiagramNode updated = node.withChildLevel(childId);
+            Map<String, DiagramData> levels = new HashMap<>(level.levels());
+            levels.put(childId, child);
+            return copy(level).nodes(replaceNodeList(level.nodes(), updated)).levels(levels).build();
+        }));
+    }
+
+    /** Elimina el nivel interno de un nodo (y su contenido). */
+    public DiagramData removeLevel(String origin, List<String> path, String nodeId) {
+        return mutate(origin, root -> updateLevelAt(root, path, level -> {
+            DiagramNode node = level.node(nodeId);
+            if (node == null) {
+                throw new NoSuchElementException("No existe el nodo: " + nodeId);
+            }
+            Map<String, DiagramData> levels = new HashMap<>(level.levels());
+            if (node.childLevelId() != null && !node.childLevelId().isBlank()) {
+                levels.remove(node.childLevelId());
+            }
+            DiagramNode updated = node.withChildLevel("");
+            return copy(level).nodes(replaceNodeList(level.nodes(), updated)).levels(levels).build();
+        }));
+    }
+
+    /** Reemplaza el contenido de un nivel interno (la ruta no puede estar vacia). */
+    public DiagramData replaceLevel(String origin, List<String> path, DiagramData data) {
+        if (path == null || path.isEmpty()) {
+            throw new IllegalArgumentException("Indica la ruta de nodos hasta el nivel interno.");
+        }
+        DiagramData next = data == null ? DiagramData.empty() : data;
+        return mutate(origin, root -> updateLevelAt(root, path, ignored -> next));
+    }
+
+    private DiagramData resolveLevel(DiagramData root, List<String> path) {
+        DiagramData level = root;
+        if (path == null) {
+            return level;
+        }
+        for (String nodeId : path) {
+            DiagramNode node = level.node(nodeId);
+            if (node == null || node.childLevelId() == null || node.childLevelId().isBlank()) {
+                throw new NoSuchElementException("El nodo no tiene nivel interno: " + nodeId);
+            }
+            DiagramData child = level.level(node.childLevelId());
+            if (child == null) {
+                throw new NoSuchElementException("No existe el nivel interno de: " + nodeId);
+            }
+            level = child;
+        }
+        return level;
+    }
+
+    private DiagramData updateLevelAt(DiagramData root, List<String> path,
+            Function<DiagramData, DiagramData> fn) {
+        if (path == null || path.isEmpty()) {
+            return fn.apply(root);
+        }
+        String nodeId = path.get(0);
+        DiagramNode node = root.node(nodeId);
+        if (node == null || node.childLevelId() == null || node.childLevelId().isBlank()) {
+            throw new NoSuchElementException("El nodo no tiene nivel interno: " + nodeId);
+        }
+        String childId = node.childLevelId();
+        DiagramData child = root.level(childId);
+        if (child == null) {
+            throw new NoSuchElementException("No existe el nivel interno de: " + nodeId);
+        }
+        DiagramData updated = updateLevelAt(child, path.subList(1, path.size()), fn);
+        Map<String, DiagramData> levels = new HashMap<>(root.levels());
+        levels.put(childId, updated);
+        return copy(root).levels(levels).build();
+    }
+
+    /** Nivel inicial con portales automaticos segun las conexiones del nodo padre. */
+    private DiagramData buildInterior(DiagramNode parent, DiagramData level, String name) {
+        List<DiagramConnection> incoming = level.connections().stream()
+                .filter(c -> c.to().nodeId().equals(parent.id())).toList();
+        List<DiagramConnection> outgoing = level.connections().stream()
+                .filter(c -> c.from().nodeId().equals(parent.id())).toList();
+        List<DiagramNode> nodes = new ArrayList<>();
+        for (int i = 0; i < incoming.size(); i++) {
+            nodes.add(portalNode("in", incoming.get(i), i, incoming.size(), level.gridSize()));
+        }
+        for (int i = 0; i < outgoing.size(); i++) {
+            nodes.add(portalNode("out", outgoing.get(i), i, outgoing.size(), level.gridSize()));
+        }
+        return new DiagramData(name, level.background(), level.gridSize(), nodes, List.of(),
+                Map.of());
+    }
+
+    private DiagramNode portalNode(String direction, DiagramConnection connection, int index,
+            int total, double grid) {
+        double width = 160;
+        double height = 56;
+        double gap = 40;
+        double rowWidth = total * width + Math.max(0, total - 1) * gap;
+        double x = Math.round((360 - rowWidth / 2 + index * (width + gap)) / grid) * grid;
+        double y = direction.equals("in") ? 80 : 260;
+        boolean in = direction.equals("in");
+        return new DiagramNode(newId("n"), x, y, width, height,
+                connection.label() == null || connection.label().isBlank()
+                        ? (in ? "Entrada" : "Salida")
+                        : connection.label(),
+                in ? "Desde el nivel superior" : "Hacia el nivel superior",
+                "", "", "pill", in ? "#e6efff" : "#e2f7ee", in ? "#2f6bd8" : "#1f9d6b",
+                "#1f2430", in ? "portalIn" : "portalOut",
+                List.of("top", "right", "bottom", "left"), null,
+                new DiagramPortal(direction, connection.id(),
+                        in ? connection.to().side() : connection.from().side()));
     }
 
     // ------------------------------------------------------------------ helpers
@@ -554,6 +730,7 @@ public class DiagramService {
         private double gridSize;
         private List<DiagramNode> nodes;
         private List<DiagramConnection> connections;
+        private Map<String, DiagramData> levels;
 
         Builder(DiagramData d) {
             this.name = d.name();
@@ -561,6 +738,7 @@ public class DiagramService {
             this.gridSize = d.gridSize();
             this.nodes = d.nodes();
             this.connections = d.connections();
+            this.levels = d.levels();
         }
 
         Builder name(String v) {
@@ -588,8 +766,13 @@ public class DiagramService {
             return this;
         }
 
+        Builder levels(Map<String, DiagramData> v) {
+            this.levels = v;
+            return this;
+        }
+
         DiagramData build() {
-            return new DiagramData(name, background, gridSize, nodes, connections);
+            return new DiagramData(name, background, gridSize, nodes, connections, levels);
         }
     }
 }
