@@ -85,6 +85,43 @@ public class DiagramMcpTools {
         return node;
     }
 
+    @McpTool(name = "get_node_doc", annotations = @McpTool.McpAnnotations(readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false), description = "Devuelve la documentacion completa de un componente: docUrl (enlace externo) y doc (Markdown interno).")
+    public DiagramNode getNodeDoc(
+            @McpToolParam(description = "Id del nodo", required = true) String id) {
+        DiagramNode node = svc().findNode(id);
+        if (node == null) {
+            throw new IllegalArgumentException("No existe el nodo: " + id);
+        }
+        return node;
+    }
+
+    @McpTool(name = "set_node_doc", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false, idempotentHint = true, openWorldHint = false), description = "Reemplaza el Markdown interno de documentacion de un componente. Admite titulos, parrafos, tablas, listas, bloques de codigo y diagramas Mermaid. Maximo 100 KB. Usa get_node_doc para leerlo.")
+    public DiagramNode setNodeDoc(
+            @McpToolParam(description = "Id del nodo", required = true) String id,
+            @McpToolParam(description = "Documentacion en Markdown", required = true) String doc) {
+        return svc().setDoc(ORIGIN, id, doc);
+    }
+
+    @McpTool(name = "append_node_doc", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false, idempotentHint = false, openWorldHint = false), description = "Anade Markdown al final de la documentacion interna de un componente, sin borrar lo existente.")
+    public DiagramNode appendNodeDoc(
+            @McpToolParam(description = "Id del nodo", required = true) String id,
+            @McpToolParam(description = "Markdown que se anade al final", required = true) String doc) {
+        return svc().appendDoc(ORIGIN, id, doc);
+    }
+
+    @McpTool(name = "set_node_doc_url", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false, idempotentHint = true, openWorldHint = false), description = "Asigna o cambia la URL externa de documentacion de un componente (http o https). Vacio la elimina. Si existe, el editor abre esa pagina en una pestana nueva.")
+    public DiagramNode setNodeDocUrl(
+            @McpToolParam(description = "Id del nodo", required = true) String id,
+            @McpToolParam(description = "URL http(s) de la documentacion; vacio para quitarla", required = true) String docUrl) {
+        return svc().setDocUrl(ORIGIN, id, docUrl);
+    }
+
+    @McpTool(name = "remove_node_doc", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = true, idempotentHint = true, openWorldHint = false), description = "Elimina la URL externa y el Markdown interno de documentacion de un componente.")
+    public DiagramNode removeNodeDoc(
+            @McpToolParam(description = "Id del nodo", required = true) String id) {
+        return svc().clearDoc(ORIGIN, id);
+    }
+
     @McpTool(name = "list_connections", annotations = @McpTool.McpAnnotations(readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false), description = "Lista todas las conexiones del diagrama.")
     public List<DiagramConnection> listConnections() {
         return svc().current().connections();

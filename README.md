@@ -67,14 +67,22 @@ WebSocket. Sin token, opera sobre la sala `DEFAULT` (monousuario).
 | Nodos | `add_node`, `update_node`, `update_nodes` (lote), `move_node`, `resize_node`, `duplicate_node`, `z_order_node`, `align_nodes`, `remove_node`, `remove_nodes` (lote) |
 | Conexiones | `add_connection`, `update_connection`, `update_connections` (lote), `reconnect_connection`, `reverse_connection`, `remove_connection`, `remove_connections` (lote) |
 | Diagrama | `rename_diagram`, `set_background`, `set_grid_size`, `auto_layout`, `clear_diagram` |
+| Documentación | `get_node_doc`, `set_node_doc`, `append_node_doc`, `set_node_doc_url`, `remove_node_doc` |
 | Niveles internos | `list_levels`, `get_level`, `create_level`, `remove_level`, `replace_level` |
 | Ver / señalar | `focus_nodes` |
 | Intercambio | `import_diagram`, `export_diagram` |
 
 `auto_layout` ordena todo el diagrama en capas por niveles (clientes → servicios → datos) para
-reducir los cruces de líneas; equivale al botón **Organizar** del editor. Son **37** herramientas.
+reducir los cruces de líneas; equivale al botón **Organizar** del editor. Son **42** herramientas.
 Los niveles internos se leen/escriben con una `path` de ids de nodos (`get_level`, `replace_level`);
 `create_level` genera portales de entrada/salida a partir de las conexiones del nodo padre.
+
+Cada nodo puede llevar documentación híbrida: `docUrl` (enlace externo http/https) y `doc`
+(Markdown interno, máximo 100 KB). El agente la gestiona con `get_node_doc`, `set_node_doc`,
+`append_node_doc`, `set_node_doc_url` y `remove_node_doc`. El editor la edita en Propiedades, la
+abre desde el menú contextual / modo trabajo y la muestra en una página independiente
+`/doc/{sala}/{nodeId}` con tablas, código y diagramas Mermaid. La API de solo lectura es
+`GET /api/docs/{sala}/{nodeId}` (JSON) y `GET /api/docs/{sala}/{nodeId}/raw.md` (Markdown).
 
 `get_meta` devuelve además `contentBounds` (rectángulo que ocupan los nodos) y, si hay un editor
 conectado, `viewport` (tamaño del lienzo en px, `zoom`, `panX`, `panY`) y `visibleWorld` (región del
@@ -127,7 +135,8 @@ src/main/java/app/arquidraw/backend/
   ArquiDrawBackendApplication.java      # arranque
   model/        PortRef, DiagramNode, DiagramConnection, DiagramData, Bounds, Viewport, NodePreset(s)
   service/      DiagramRepository, InMemoryDiagramRepository, DiagramService, DiagramChangedEvent
-  web/          WsClientMessage, WsServerMessage, DiagramWsHandler, WebSocketConfig, WebConfig
+  web/          WsClientMessage, WsServerMessage, DiagramWsHandler, WebSocketConfig, WebConfig,
+                DocController, NodeDocument
   mcp/          DiagramMcpTools, ArquiDrawResources
 src/main/resources/
   application.properties                # puerto, MCP, log

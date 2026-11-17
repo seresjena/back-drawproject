@@ -88,6 +88,8 @@
         "sublabel": { "type": "string", "description": "Subnombre / descripcion secundaria. Puede ser vacio." },
         "technology": { "type": "string", "description": "Tecnologia principal del componente (p. ej. Node.js, PostgreSQL, Kafka). Puede ser vacio." },
         "summary": { "type": "string", "description": "Resumen de que hace el componente (descripcion del servicio). Puede ser vacio." },
+        "docUrl": { "type": "string", "description": "URL externa de documentacion (http o https), por ejemplo api-gateway.md en un repositorio. Puede ser vacia." },
+        "doc": { "type": "string", "maxLength": 100000, "description": "Documentacion completa en Markdown (titulos, tablas, codigo y diagramas Mermaid). Puede ser vacia." },
         "shape": { "$ref": "#/$defs/NodeShape" },
         "fill": { "$ref": "#/$defs/Color", "description": "Color de relleno (hex, p. ej. '#e6efff')." },
         "stroke": { "$ref": "#/$defs/Color", "description": "Color del borde." },

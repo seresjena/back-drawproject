@@ -10,6 +10,7 @@ import app.arquidraw.backend.model.Point;
 import app.arquidraw.backend.model.PortRef;
 import app.arquidraw.backend.model.ViewRequest;
 import app.arquidraw.backend.model.Viewport;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -44,6 +45,12 @@ public class DiagramService {
     /** Direcciones validas para {@link #align}. */
     private static final Set<String> ALIGN_DIRECTIONS =
             Set.of("left", "right", "top", "bottom", "centerX", "centerY");
+
+    /** Limite del Markdown interno de un nodo (100 KB). */
+    public static final int MAX_DOC_LENGTH = 100_000;
+
+    /** Limite de la URL externa de documentacion. */
+    private static final int MAX_DOC_URL_LENGTH = 2048;
 
     private final DiagramRepository repository;
     private final ApplicationEventPublisher events;
@@ -205,6 +212,104 @@ public class DiagramService {
         return result;
     }
 
+    /** Busca un nodo en la raiz o en cualquier nivel interno. */
+    public DiagramNode findNode(String id) {
+        return findNode(repository.load(), id);
+    }
+
+    private static DiagramNode findNode(DiagramData level, String id) {
+        for (DiagramNode node : level.nodes()) {
+            if (node.id().equals(id)) {
+                return node;
+            }
+        }
+        for (DiagramData child : level.levels().values()) {
+            DiagramNode found = findNode(child, id);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /** Reemplaza el Markdown interno de un nodo (en cualquier nivel). */
+    public DiagramNode setDoc(String origin, String id, String doc) {
+        return patchDocumentation(origin, id, null, doc == null ? "" : doc, false);
+    }
+
+    /** Anade Markdown al final de la documentacion interna de un nodo. */
+    public DiagramNode appendDoc(String origin, String id, String doc) {
+        return patchDocumentation(origin, id, null, doc == null ? "" : doc, true);
+    }
+
+    /** Cambia la URL externa de documentacion (vacio la elimina). */
+    public DiagramNode setDocUrl(String origin, String id, String docUrl) {
+        return patchDocumentation(origin, id, docUrl == null ? "" : docUrl, null, false);
+    }
+
+    /** Elimina la URL externa y el Markdown interno de un nodo. */
+    public DiagramNode clearDoc(String origin, String id) {
+        return patchDocumentation(origin, id, "", "", false);
+    }
+
+    private DiagramNode patchDocumentation(String origin, String id, String docUrl, String doc,
+            boolean append) {
+        DiagramNode existing = findNode(id);
+        if (existing == null) {
+            throw new NoSuchElementException("No existe el nodo: " + id);
+        }
+        String nextUrl = docUrl != null ? normalizeDocUrl(docUrl) : existing.docUrl();
+        String nextDoc;
+        if (doc == null) {
+            nextDoc = existing.doc();
+        } else if (append) {
+            nextDoc = existing.doc().isBlank() ? doc : existing.doc() + "\n\n" + doc;
+        } else {
+            nextDoc = doc;
+        }
+        if (nextDoc.length() > MAX_DOC_LENGTH) {
+            throw new IllegalArgumentException(
+                    "La documentacion supera el limite de " + MAX_DOC_LENGTH + " caracteres.");
+        }
+        DiagramNode updated = existing.withDocumentation(nextUrl, nextDoc);
+        mutate(origin, diag -> replaceNodeDeep(diag, updated), List.of(id));
+        return updated;
+    }
+
+    private static String normalizeDocUrl(String raw) {
+        String url = raw == null ? "" : raw.trim();
+        if (url.isEmpty()) {
+            return "";
+        }
+        if (url.length() > MAX_DOC_URL_LENGTH) {
+            throw new IllegalArgumentException("La URL de documentacion es demasiado larga.");
+        }
+        URI uri;
+        try {
+            uri = URI.create(url);
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("URL de documentacion invalida: " + url);
+        }
+        String scheme = uri.getScheme();
+        if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
+            throw new IllegalArgumentException("La URL de documentacion debe usar http o https.");
+        }
+        return url;
+    }
+
+    /** Reemplaza un nodo en cualquier nivel interno (mismo id). */
+    private static DiagramData replaceNodeDeep(DiagramData level, DiagramNode updated) {
+        List<DiagramNode> nodes = new ArrayList<>(level.nodes().size());
+        for (DiagramNode node : level.nodes()) {
+            nodes.add(node.id().equals(updated.id()) ? updated : node);
+        }
+        Map<String, DiagramData> levels = new HashMap<>(level.levels());
+        for (Map.Entry<String, DiagramData> entry : level.levels().entrySet()) {
+            levels.put(entry.getKey(), replaceNodeDeep(entry.getValue(), updated));
+        }
+        return copy(level).nodes(nodes).levels(levels).build();
+    }
+
     private DiagramNode patchNode(String origin, String id, String label, String sublabel,
             String technology, String summary, Double x, Double y, Double width, Double height,
             String shape, String icon, String fill, String stroke, String textColor, List<String> ports) {
@@ -224,12 +329,16 @@ public class DiagramService {
                 sublabel != null ? sublabel : existing.sublabel(),
                 technology != null ? technology : existing.technology(),
                 summary != null ? summary : existing.summary(),
+                existing.docUrl(),
+                existing.doc(),
                 shape != null ? shape : existing.shape(),
                 fill != null ? fill : existing.fill(),
                 stroke != null ? stroke : existing.stroke(),
                 textColor != null ? textColor : existing.textColor(),
                 icon != null ? icon : existing.icon(),
-                ports != null ? ports : existing.ports());
+                ports != null ? ports : existing.ports(),
+                existing.childLevelId(),
+                existing.portal());
 
         mutate(origin, diag -> copy(diag).nodes(replaceNodeList(diag.nodes(), updated)).connections(diag.connections()).build(), List.of(id));
         return updated;
@@ -256,9 +365,9 @@ public class DiagramService {
         double dy = offsetY != null ? offsetY : 30;
         DiagramNode clone = new DiagramNode(newId("n"), existing.x() + dx, existing.y() + dy,
                 existing.width(), existing.height(), existing.label(), existing.sublabel(),
-                existing.technology(), existing.summary(), existing.shape(), existing.fill(),
-                existing.stroke(), existing.textColor(), existing.icon(), existing.ports(),
-                null, existing.portal());
+                existing.technology(), existing.summary(), existing.docUrl(), existing.doc(),
+                existing.shape(), existing.fill(), existing.stroke(), existing.textColor(),
+                existing.icon(), existing.ports(), null, existing.portal());
         Map<String, DiagramData> levels = new HashMap<>(d.levels());
         if (existing.childLevelId() != null && !existing.childLevelId().isBlank()) {
             DiagramData child = d.level(existing.childLevelId());
@@ -283,8 +392,8 @@ public class DiagramService {
             String id = newId("n");
             ids.put(n.id(), id);
             DiagramNode copy = new DiagramNode(id, n.x(), n.y(), n.width(), n.height(), n.label(),
-                    n.sublabel(), n.technology(), n.summary(), n.shape(), n.fill(), n.stroke(),
-                    n.textColor(), n.icon(), n.ports(), null, n.portal());
+                    n.sublabel(), n.technology(), n.summary(), n.docUrl(), n.doc(), n.shape(), n.fill(),
+                    n.stroke(), n.textColor(), n.icon(), n.ports(), null, n.portal());
             if (n.childLevelId() != null && !n.childLevelId().isBlank()) {
                 DiagramData child = level.level(n.childLevelId());
                 if (child != null) {
