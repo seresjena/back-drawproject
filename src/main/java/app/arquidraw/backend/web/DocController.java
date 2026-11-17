@@ -57,7 +57,11 @@ public class DocController {
     }
 
     private static String slug(String label) {
-        String clean = label == null ? "" : label.trim().toLowerCase()
+        String base = label == null ? "" : label.trim()
+                .replaceFirst("^\\s*\\d+\\s*(?:\\.\\s*-?|[-)])\\s*", "");
+        String clean = java.text.Normalizer.normalize(base, java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "")
+                .toLowerCase()
                 .replaceAll("[^a-z0-9]+", "-")
                 .replaceAll("^-+|-+$", "");
         return clean.isEmpty() ? "componente" : clean;
