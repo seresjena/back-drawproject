@@ -7,11 +7,14 @@ Servidor para que **agentes de IA** lean y modifiquen el diagrama activo de Arqu
   compatible (Claude Desktop, Cursor, VS Code, etc.) descubre y ejecuta las operaciones.
 - **WebSocket** en `/ws`: cada cambio (hecho por el agente por MCP o por el usuario en el editor)
   se difunde al instante a los demás clientes **de la misma sala**.
-- **Salas (tenants)**: el estado vive por sala. El token viaja en la URL del editor y del WS
-  (`?sala=TOKEN`); sin token se usa la sala `DEFAULT`. El agente se conecta a la sala del usuario
-  pasando ese token al endpoint MCP (`POST /mcp?sala=TOKEN` o `POST /mcp/TOKEN`), de modo que
-  trabaja sobre **su** diagrama. Todo en memoria (sin autenticación), pensado para uso local y
-  configurable por variables de entorno para moverlo a la nube después sin tocar código.
+- **Salas (tenants) y roles**: el estado vive por sala. El creador y el agente usan el token de
+  edición (`?sala=TOKEN`, también en el WS); el enlace compartido usa un token de espectador
+  (`?ver=TOKEN_VISTA`) que solo permite leer. El editor registra ese token al conectar
+  (`?sala=TOKEN&ver=TOKEN_VISTA`) y `RoomManager` lo resuelve a la misma sala. El backend rechaza
+  `push`/`viewport` de un espectador. Sin token se usa la sala `DEFAULT`. El agente se conecta con
+  el token de edición (`POST /mcp?sala=TOKEN` o `POST /mcp/TOKEN`). Todo en memoria (sin
+  autenticación), pensado para uso local y configurable por variables de entorno para moverlo a la
+  nube después sin tocar código.
 
 ## Requisitos
 
@@ -82,7 +85,8 @@ Cada nodo puede llevar documentación híbrida: `docUrl` (enlace externo http/ht
 `append_node_doc`, `set_node_doc_url` y `remove_node_doc`. El editor la edita en Propiedades, la
 abre desde el menú contextual / modo trabajo y la muestra en una página independiente
 `/doc/{sala}/{nodeId}` con tablas, código y diagramas Mermaid. La API de solo lectura es
-`GET /api/docs/{sala}/{nodeId}` (JSON) y `GET /api/docs/{sala}/{nodeId}/raw.md` (Markdown).
+`GET /api/docs/{sala}/{nodeId}` (JSON) y `GET /api/docs/{sala}/{nodeId}/raw.md` (Markdown); acepta
+tanto el token de edición como el de espectador (`RoomManager.forToken`).
 
 `get_meta` devuelve además `contentBounds` (rectángulo que ocupan los nodos) y, si hay un editor
 conectado, `viewport` (tamaño del lienzo en px, `zoom`, `panX`, `panY`) y `visibleWorld` (región del

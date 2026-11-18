@@ -32,7 +32,7 @@ public class DocController {
 
     @GetMapping("/{sala}/{nodeId}")
     public NodeDocument document(@PathVariable String sala, @PathVariable String nodeId) {
-        DiagramService service = rooms.forRoom(sala);
+        DiagramService service = rooms.forToken(sala);
         DiagramNode node = service.findNode(nodeId);
         if (node == null) {
             throw new NodeDocumentNotFound(nodeId);

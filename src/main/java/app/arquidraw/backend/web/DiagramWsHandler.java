@@ -43,7 +43,14 @@ public class DiagramWsHandler extends TextWebSocketHandler {
     private static final int SEND_BUFFER_LIMIT = 1024 * 1024;
     private static final int SEND_TIME_LIMIT_MS = 10_000;
 
-    private record Conn(String room, WebSocketSession session) {
+    private enum Role {
+        EDITOR, VIEWER
+    }
+
+    private record Conn(String room, Role role, WebSocketSession session) {
+    }
+
+    private record Access(String room, Role role) {
     }
 
     private final Map<String, Conn> conns = new ConcurrentHashMap<>();
@@ -57,29 +64,47 @@ public class DiagramWsHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
-        String room = roomOf(session);
+        Access access = accessOf(session);
+        if (access == null) {
+            log.info("Conexion de espectador rechazada: token no registrado.");
+            try {
+                session.close(CloseStatus.POLICY_VIOLATION.withReason("Sala de espectador no disponible"));
+            } catch (IOException ex) {
+                log.debug("No se pudo cerrar la conexion: {}", ex.getMessage());
+            }
+            return;
+        }
         WebSocketSession safe = new ConcurrentWebSocketSessionDecorator(session, SEND_TIME_LIMIT_MS, SEND_BUFFER_LIMIT);
-        conns.put(session.getId(), new Conn(room, safe));
-        log.info("Editor conectado a la sala {} ({} sesiones).", room, conns.size());
+        conns.put(session.getId(), new Conn(access.room(), access.role(), safe));
+        log.info("{} conectado a la sala {} ({} sesiones).",
+                access.role() == Role.EDITOR ? "Editor" : "Espectador", access.room(), conns.size());
         // No se envia estado automaticamente: el editor decide al abrir si
         // empuja su diagrama ("push") o pide el del servidor ("request").
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        conns.remove(session.getId());
-        log.info("Editor desconectado ({} sesiones).", conns.size());
+        Conn removed = conns.remove(session.getId());
+        String role = removed != null && removed.role() == Role.VIEWER ? "Espectador" : "Editor";
+        log.info("{} desconectado ({} sesiones).", role, conns.size());
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession rawSession, TextMessage message) {
         Conn conn = conns.get(rawSession.getId());
         String room = conn == null ? RoomManager.DEFAULT_ROOM : conn.room();
+        Role role = conn == null ? Role.VIEWER : conn.role();
         WebSocketSession session = conn == null ? rawSession : conn.session();
         DiagramService service = rooms.forRoom(room);
         try {
             WsClientMessage incoming = mapper.readValue(message.getPayload(), WsClientMessage.class);
             if (incoming == null || incoming.type() == null) {
+                return;
+            }
+            if (role == Role.VIEWER && ("push".equals(incoming.type()) || "viewport".equals(incoming.type()))) {
+                if ("push".equals(incoming.type())) {
+                    send(session, WsServerMessage.error("La sala es de solo lectura."));
+                }
                 return;
             }
             switch (incoming.type()) {
@@ -144,19 +169,41 @@ public class DiagramWsHandler extends TextWebSocketHandler {
         }
     }
 
-    /** Lee el token de sala ({@code ?sala=TOKEN}) de la URL de la conexion. */
-    private static String roomOf(WebSocketSession session) {
+    /**
+     * Resuelve el acceso de la conexion. El editor usa {@code ?sala=TOKEN}
+     * (y puede registrar su token de espectador con {@code &ver=TOKEN_VISTA});
+     * el espectador usa solo {@code ?ver=TOKEN_VISTA}.
+     */
+    private Access accessOf(WebSocketSession session) {
         URI uri = session.getUri();
+        String edit = queryParam(uri, "sala");
+        String view = queryParam(uri, "ver");
+        if (edit != null) {
+            String room = RoomManager.normalize(edit);
+            if (view != null) {
+                rooms.registerViewer(view, room);
+            }
+            return new Access(room, Role.EDITOR);
+        }
+        if (view != null) {
+            String room = rooms.roomForViewer(view);
+            return room == null ? null : new Access(room, Role.VIEWER);
+        }
+        return new Access(RoomManager.DEFAULT_ROOM, Role.EDITOR);
+    }
+
+    private static String queryParam(URI uri, String key) {
         if (uri == null || uri.getQuery() == null) {
-            return RoomManager.DEFAULT_ROOM;
+            return null;
         }
         for (String part : uri.getQuery().split("&")) {
             int eq = part.indexOf('=');
-            if (eq > 0 && "sala".equalsIgnoreCase(part.substring(0, eq))) {
-                return RoomManager.normalize(part.substring(eq + 1));
+            if (eq > 0 && key.equalsIgnoreCase(part.substring(0, eq))) {
+                String value = part.substring(eq + 1).trim();
+                return value.isEmpty() ? null : value;
             }
         }
-        return RoomManager.DEFAULT_ROOM;
+        return null;
     }
 
     private static double orDefault(Double value, double fallback) {

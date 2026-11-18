@@ -22,6 +22,8 @@ public class RoomManager {
 
     private final ApplicationEventPublisher events;
     private final ConcurrentHashMap<String, DiagramService> rooms = new ConcurrentHashMap<>();
+    /** Tokens de solo lectura -> token de la sala que pueden ver. */
+    private final ConcurrentHashMap<String, String> viewers = new ConcurrentHashMap<>();
 
     public RoomManager(ApplicationEventPublisher events) {
         this.events = events;
@@ -31,6 +33,38 @@ public class RoomManager {
     public DiagramService forRoom(String room) {
         String key = normalize(room);
         return rooms.computeIfAbsent(key, r -> new DiagramService(new InMemoryDiagramRepository(), events, r));
+    }
+
+    /**
+     * Registra un token de espectador para una sala. Lo hace el editor al
+     * conectar; es lo que permite compartir un codigo de solo lectura sin
+     * revelar el token de edicion.
+     */
+    public void registerViewer(String viewToken, String room) {
+        String view = normalize(viewToken);
+        String key = normalize(room);
+        if (view.equals(DEFAULT_ROOM) || view.equals(key)) {
+            return;
+        }
+        viewers.put(view, key);
+    }
+
+    /** Sala asociada a un token de espectador, o null si no esta registrado. */
+    public String roomForViewer(String viewToken) {
+        return viewers.get(normalize(viewToken));
+    }
+
+    /**
+     * Resuelve un token para lecturas (documentacion): si es un token de
+     * espectador devuelve su sala; si no, la sala indicada.
+     */
+    public DiagramService forToken(String token) {
+        String key = normalize(token);
+        // El mapeo de espectador manda: si antes se creo una sala vacia con
+        // ese token (p. ej. una peticion de docs tras reiniciar), no debe
+        // ocultar la sala real cuando el editor vuelve a registrarlo.
+        String room = viewers.get(key);
+        return forRoom(room == null ? key : room);
     }
 
     /** Sala por defecto (MCP y editores sin token). */
