@@ -70,20 +70,32 @@ WebSocket. Sin token, opera sobre la sala `DEFAULT` (monousuario).
 | Nodos | `add_node`, `update_node`, `update_nodes` (lote), `move_node`, `resize_node`, `duplicate_node`, `z_order_node`, `align_nodes`, `remove_node`, `remove_nodes` (lote) |
 | Conexiones | `add_connection`, `update_connection`, `update_connections` (lote), `reconnect_connection`, `reverse_connection`, `remove_connection`, `remove_connections` (lote) |
 | Diagrama | `rename_diagram`, `set_background`, `set_grid_size`, `auto_layout`, `clear_diagram` |
-| Documentación | `get_node_doc`, `set_node_doc`, `append_node_doc`, `set_node_doc_url`, `remove_node_doc` |
+| Documentación | `get_node_doc`, `set_node_doc`, `append_node_doc`, `set_node_doc_url`, `remove_node_doc`, `get_doc`, `update_doc`, `patch_doc` |
 | Niveles internos | `list_levels`, `get_level`, `create_level`, `remove_level`, `replace_level` |
 | Ver / señalar | `focus_nodes` |
 | Intercambio | `import_diagram`, `export_diagram` |
 
 `auto_layout` ordena todo el diagrama en capas por niveles (clientes → servicios → datos) para
-reducir los cruces de líneas; equivale al botón **Organizar** del editor. Son **42** herramientas.
-Los niveles internos se leen/escriben con una `path` de ids de nodos (`get_level`, `replace_level`);
-`create_level` genera portales de entrada/salida a partir de las conexiones del nodo padre.
+reducir los cruces de líneas; equivale al botón **Organizar** del editor. Son **45** herramientas.
+Los niveles internos se direccionan con una `path` de ids de nodos. `get_level`/`replace_level` leen y
+reemplazan un nivel; `add_node`, `update_node(s)`, `remove_node(s)`, `get_node`, las conexiones y
+`focus_nodes` aceptan `path` para operar directamente dentro de un nivel. `create_level` genera
+portales de entrada/salida a partir de las conexiones del nodo padre.
+
+**Fase 2 (respuestas livianas).** Las mutaciones devuelven por defecto
+`{ ok, id(s), revision, counts: { nodes, connections, levels }, warnings }`; con `verbose: true`
+añaden el `diagram` completo. `counts` suma también los niveles internos. `list_nodes` acepta
+`path`, `fields`, `includeDocs` (por defecto `false`) y `filter` (`labelContains`, `stroke`; los
+filtros de metadatos llegan en la fase 6). `export_diagram` acepta `format` (`adraw`/`json`),
+`includeDocs` (por defecto `true`) y `level` para exportar un solo nivel sin fichas.
 
 Cada nodo puede llevar documentación híbrida: `docUrl` (enlace externo http/https) y `doc`
 (Markdown interno, máximo 100 KB). El agente la gestiona con `get_node_doc`, `set_node_doc`,
-`append_node_doc`, `set_node_doc_url` y `remove_node_doc`. El editor la edita en Propiedades, la
-abre desde el menú contextual / modo trabajo y la muestra en una página independiente
+`append_node_doc`, `set_node_doc_url` y `remove_node_doc`; para editar fichas de niveles internos
+sin reemplazar el nivel usa `get_doc`, `update_doc` y `patch_doc` (por sección `## <section>`).
+`add_node`, `update_node` y `update_nodes` también aceptan `doc` y `docUrl`, y rechazan campos
+desconocidos. El editor la edita en Propiedades, la abre desde el menú contextual / modo trabajo y la
+muestra en una página independiente
 `/doc/{sala}/{nodeId}` con tablas, código y diagramas Mermaid. La API de solo lectura es
 `GET /api/docs/{sala}/{nodeId}` (JSON) y `GET /api/docs/{sala}/{nodeId}/raw.md` (Markdown); acepta
 tanto el token de edición como el de espectador (`RoomManager.forToken`).
@@ -94,7 +106,8 @@ mundo visible). Así un agente sabe **dónde colocar** el siguiente nodo para qu
 
 Los nodos incluyen `technology` (tecnología principal) y `summary` (qué hace el componente).
 `add_node`, `update_node` y `update_nodes` aceptan ambos parámetros y se devuelven en
-`get_node`/`list_nodes`/`get_diagram`.
+`get_node`/`list_nodes`/`get_diagram`. `list_nodes` omite el Markdown por defecto para que la
+consulta sea barata; pide `includeDocs: true` o `fields: ["doc"]` solo cuando lo necesites.
 
 Cada mutación incrementa la `revision` del diagrama y se difunde por WebSocket. Las mutaciones
 informan además los **ids que tocaron** (`highlight`) y `focus_nodes` señala ids sin cambiar

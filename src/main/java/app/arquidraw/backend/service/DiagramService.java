@@ -21,6 +21,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.context.ApplicationEventPublisher;
 
 /**
@@ -126,6 +128,14 @@ public class DiagramService {
         events.publishEvent(new DiagramFocusEvent(clean, origin == null ? ORIGIN_SERVER : origin, room));
     }
 
+    /** Resalta ids de un nivel concreto (la ruta se valida antes de publicar). */
+    public synchronized void focus(String origin, List<String> path, List<String> ids) {
+        if (path != null) {
+            resolveLevel(current(), path);
+        }
+        focus(origin, ids);
+    }
+
     private synchronized DiagramData mutate(String origin, Function<DiagramData, DiagramData> fn) {
         return mutate(origin, fn, List.of());
     }
@@ -155,18 +165,20 @@ public class DiagramService {
 
     // ------------------------------------------------------------------ nodos
 
-    public DiagramNode addNode(String origin, String label, String sublabel, String technology,
-            String summary, String presetKey, Double x, Double y, Double width, Double height, String shape,
-            String icon, String fill, String stroke, String textColor, List<String> ports) {
+    public DiagramNode addNode(String origin, List<String> path, String label, String sublabel,
+            String technology, String summary, String presetKey, Double x, Double y, Double width,
+            Double height, String shape, String icon, String fill, String stroke, String textColor,
+            List<String> ports, String docUrl, String doc) {
 
         DiagramData d = repository.load();
+        DiagramData target = resolveLevel(d, path);
         NodePreset preset = NodePresets.find(presetKey);
         if (preset == null) {
             preset = NodePresets.defaultPreset();
         }
 
         String id = newId("n");
-        double[] pos = autoPosition(d, x, y);
+        double[] pos = autoPosition(target, x, y);
         double w = width != null ? width : preset.width();
         double h = height != null ? height : preset.height();
         String sh = shape != null ? shape : preset.shape();
@@ -181,33 +193,37 @@ public class DiagramService {
                 sublabel == null ? "" : sublabel,
                 technology == null ? "" : technology,
                 summary == null ? "" : summary,
-                sh, fi, st, tc, ic, p);
+                normalizeDocUrl(docUrl),
+                normalizeDoc(doc),
+                sh, fi, st, tc, ic, p, null, null);
 
-        mutate(origin, diag -> copy(diag).nodes(append(diag.nodes(), node)).connections(diag.connections()).build(), List.of(id));
+        mutate(origin, root -> updateLevelAt(root, path,
+                level -> copy(level).nodes(append(level.nodes(), node)).build()), List.of(id));
         return node;
     }
 
-    public DiagramNode updateNode(String origin, String id, String label, String sublabel,
-            String technology, String summary, Double x, Double y, Double width, Double height,
-            String shape, String icon, String fill, String stroke, String textColor, List<String> ports) {
+    public DiagramNode updateNode(String origin, List<String> path, String id, String label,
+            String sublabel, String technology, String summary, Double x, Double y, Double width,
+            Double height, String shape, String icon, String fill, String stroke, String textColor,
+            List<String> ports, String docUrl, String doc) {
 
-        DiagramNode updated = patchNode(origin, id, label, sublabel, technology, summary, x, y, width,
-                height, shape, icon, fill, stroke, textColor, ports);
-        return updated;
+        return patchNode(origin, path, id, label, sublabel, technology, summary, x, y, width,
+                height, shape, icon, fill, stroke, textColor, ports, docUrl, doc);
     }
 
     /** Aplica el mismo patch a varios nodos a la vez (estilo/serie). */
-    public List<DiagramNode> updateNodes(String origin, List<String> ids, String label, String sublabel,
-            String technology, String summary, Double x, Double y, Double width, Double height,
-            String shape, String icon, String fill, String stroke, String textColor, List<String> ports) {
+    public List<DiagramNode> updateNodes(String origin, List<String> path, List<String> ids, String label,
+            String sublabel, String technology, String summary, Double x, Double y, Double width,
+            Double height, String shape, String icon, String fill, String stroke, String textColor,
+            List<String> ports, String docUrl, String doc) {
 
         if (ids == null || ids.isEmpty()) {
             throw new IllegalArgumentException("Indica al menos un id.");
         }
         List<DiagramNode> result = new ArrayList<>();
         for (String id : ids) {
-            result.add(patchNode(origin, id, label, sublabel, technology, summary, x, y, width, height,
-                    shape, icon, fill, stroke, textColor, ports));
+            result.add(patchNode(origin, path, id, label, sublabel, technology, summary, x, y, width,
+                    height, shape, icon, fill, stroke, textColor, ports, docUrl, doc));
         }
         return result;
     }
@@ -250,6 +266,168 @@ public class DiagramService {
     /** Elimina la URL externa y el Markdown interno de un nodo. */
     public DiagramNode clearDoc(String origin, String id) {
         return patchDocumentation(origin, id, "", "", false);
+    }
+
+    /** Busca un nodo en el nivel indicado por la ruta (vacia/null = raiz). */
+    public DiagramNode nodeAt(List<String> path, String id) {
+        DiagramData level = resolveLevel(repository.load(), path);
+        DiagramNode node = level.node(id);
+        if (node == null) {
+            throw new NoSuchElementException("No existe el nodo: " + id);
+        }
+        return node;
+    }
+
+    /** Reemplaza la ficha de un nodo de un nivel concreto. */
+    public DiagramNode updateDoc(String origin, List<String> path, String id, String markdown,
+            Long expectedRevision) {
+        checkRevision(expectedRevision);
+        return patchDocumentationAt(origin, path, id, null,
+                markdown == null ? "" : markdown, false);
+    }
+
+    /**
+     * Reemplaza (o anade, con mode=append) el contenido de la seccion
+     * "## <section>" de la ficha. Las demas secciones no se tocan.
+     */
+    public DiagramNode patchDoc(String origin, List<String> path, String id, String section,
+            String markdown, String mode, Long expectedRevision) {
+        checkRevision(expectedRevision);
+        DiagramNode existing = nodeAt(path, id);
+        String next = patchSection(existing.doc(), section, markdown, mode);
+        return patchDocumentationAt(origin, path, id, null, next, false);
+    }
+
+    private DiagramNode patchDocumentationAt(String origin, List<String> path, String id,
+            String docUrl, String doc, boolean append) {
+        DiagramData level = resolveLevel(repository.load(), path);
+        DiagramNode existing = level.node(id);
+        if (existing == null) {
+            throw new NoSuchElementException("No existe el nodo: " + id);
+        }
+        String nextUrl = docUrl != null ? normalizeDocUrl(docUrl) : existing.docUrl();
+        String nextDoc;
+        if (doc == null) {
+            nextDoc = existing.doc();
+        } else if (append) {
+            nextDoc = existing.doc().isBlank() ? doc : existing.doc() + "\n\n" + doc;
+        } else {
+            nextDoc = doc;
+        }
+        nextDoc = normalizeDoc(nextDoc);
+        DiagramNode updated = existing.withDocumentation(nextUrl, nextDoc);
+        mutate(origin, root -> updateLevelAt(root, path,
+                lvl -> copy(lvl).nodes(replaceNodeList(lvl.nodes(), updated)).build()), List.of(id));
+        return updated;
+    }
+
+    private void checkRevision(Long expectedRevision) {
+        if (expectedRevision != null && expectedRevision.longValue() != revision.get()) {
+            throw new IllegalStateException("Conflicto de revision: esperada " + expectedRevision
+                    + ", actual " + revision.get() + ".");
+        }
+    }
+
+    /**
+     * Sustituye el contenido de una seccion nivel 2. Conserva el titulo y el
+     * texto de las demas secciones; si no existe, la crea al final.
+     */
+    private static String patchSection(String doc, String section, String markdown, String mode) {
+        String title = normalizeSectionTitle(section);
+        if (title.isEmpty()) {
+            throw new IllegalArgumentException("Indica la seccion que quieres modificar.");
+        }
+        String content = markdown == null ? "" : markdown;
+        boolean append = "append".equalsIgnoreCase(mode == null ? "" : mode.trim());
+        if (mode != null && !mode.isBlank() && !append && !"replace".equalsIgnoreCase(mode.trim())) {
+            throw new IllegalArgumentException("Modo invalido: " + mode + ". Usa replace o append.");
+        }
+
+        String source = doc == null ? "" : doc;
+        Matcher headings = Pattern.compile("(?m)^##[ \t]+([^\r\n]+?)[ \t]*$").matcher(source);
+        int contentStart = -1;
+        int contentEnd = -1;
+        while (headings.find()) {
+            if (!normalizeHeadingTitle(headings.group(1)).equalsIgnoreCase(title)) {
+                continue;
+            }
+            contentStart = headings.end();
+            if (contentStart < source.length() && source.charAt(contentStart) == '\r') {
+                contentStart++;
+            }
+            if (contentStart < source.length() && source.charAt(contentStart) == '\n') {
+                contentStart++;
+            }
+            Matcher next = Pattern.compile("(?m)^#{1,2}[ \t]+").matcher(source);
+            contentEnd = next.find(contentStart) ? next.start() : source.length();
+            break;
+        }
+
+        if (contentStart < 0) {
+            String base = source;
+            if (!base.isEmpty() && !base.endsWith("\n")) {
+                base += "\n";
+            }
+            if (!base.isEmpty() && !base.endsWith("\n\n")) {
+                base += "\n";
+            }
+            return base + "## " + title + "\n" + content
+                    + (content.endsWith("\n") ? "" : "\n");
+        }
+
+        String prefix = source.substring(0, contentStart);
+        String suffix = source.substring(contentEnd);
+        String existingContent = source.substring(contentStart, contentEnd);
+        String trailing = trailingLineBreaks(existingContent);
+        String nextContent;
+        if (append) {
+            nextContent = existingContent;
+            if (!nextContent.isEmpty() && !nextContent.endsWith("\n")) {
+                nextContent += "\n";
+            }
+            if (!nextContent.isEmpty() && !nextContent.endsWith("\n\n")) {
+                nextContent += "\n";
+            }
+            nextContent += content;
+        } else if (!trailing.isEmpty()) {
+            nextContent = content.replaceFirst("[\\r\\n]+$", "") + trailing;
+        } else {
+            nextContent = content;
+        }
+        if (!nextContent.isEmpty() && !nextContent.endsWith("\n")) {
+            nextContent += "\n";
+        }
+        return prefix + nextContent + suffix;
+    }
+
+    private static String trailingLineBreaks(String value) {
+        int i = value.length();
+        while (i > 0 && (value.charAt(i - 1) == '\n' || value.charAt(i - 1) == '\r')) {
+            i--;
+        }
+        return value.substring(i);
+    }
+
+    private static String normalizeSectionTitle(String raw) {
+        String title = raw == null ? "" : raw.trim();
+        title = title.replaceFirst("^#{1,6}\\s*", "");
+        title = title.replaceFirst("\\s*#+\\s*$", "");
+        return title.trim();
+    }
+
+    private static String normalizeHeadingTitle(String raw) {
+        String title = raw == null ? "" : raw.trim();
+        title = title.replaceFirst("\\s*#+\\s*$", "");
+        return title.trim();
+    }
+
+    private static String normalizeDoc(String doc) {
+        String value = doc == null ? "" : doc;
+        if (value.length() > MAX_DOC_LENGTH) {
+            throw new IllegalArgumentException(
+                    "La documentacion supera el limite de " + MAX_DOC_LENGTH + " caracteres.");
+        }
+        return value;
     }
 
     private DiagramNode patchDocumentation(String origin, String id, String docUrl, String doc,
@@ -310,12 +488,14 @@ public class DiagramService {
         return copy(level).nodes(nodes).levels(levels).build();
     }
 
-    private DiagramNode patchNode(String origin, String id, String label, String sublabel,
-            String technology, String summary, Double x, Double y, Double width, Double height,
-            String shape, String icon, String fill, String stroke, String textColor, List<String> ports) {
+    private DiagramNode patchNode(String origin, List<String> path, String id, String label,
+            String sublabel, String technology, String summary, Double x, Double y, Double width,
+            Double height, String shape, String icon, String fill, String stroke, String textColor,
+            List<String> ports, String docUrl, String doc) {
 
         DiagramData d = repository.load();
-        DiagramNode existing = d.node(id);
+        DiagramData level = resolveLevel(d, path);
+        DiagramNode existing = level.node(id);
         if (existing == null) {
             throw new NoSuchElementException("No existe el nodo: " + id);
         }
@@ -329,8 +509,8 @@ public class DiagramService {
                 sublabel != null ? sublabel : existing.sublabel(),
                 technology != null ? technology : existing.technology(),
                 summary != null ? summary : existing.summary(),
-                existing.docUrl(),
-                existing.doc(),
+                docUrl != null ? normalizeDocUrl(docUrl) : existing.docUrl(),
+                doc != null ? normalizeDoc(doc) : existing.doc(),
                 shape != null ? shape : existing.shape(),
                 fill != null ? fill : existing.fill(),
                 stroke != null ? stroke : existing.stroke(),
@@ -340,18 +520,19 @@ public class DiagramService {
                 existing.childLevelId(),
                 existing.portal());
 
-        mutate(origin, diag -> copy(diag).nodes(replaceNodeList(diag.nodes(), updated)).connections(diag.connections()).build(), List.of(id));
+        mutate(origin, root -> updateLevelAt(root, path,
+                lvl -> copy(lvl).nodes(replaceNodeList(lvl.nodes(), updated)).build()), List.of(id));
         return updated;
     }
 
     public DiagramNode moveNode(String origin, String id, double x, double y) {
-        return updateNode(origin, id, null, null, null, null, x, y, null, null, null, null, null, null,
-                null, null);
+        return updateNode(origin, List.of(), id, null, null, null, null, x, y, null, null, null,
+                null, null, null, null, null, null, null);
     }
 
     public DiagramNode resizeNode(String origin, String id, double width, double height) {
-        return updateNode(origin, id, null, null, null, null, null, null, width, height, null, null, null,
-                null, null, null);
+        return updateNode(origin, List.of(), id, null, null, null, null, null, null, width, height,
+                null, null, null, null, null, null, null, null);
     }
 
     /** Duplica un nodo (nuevo id) desplazado un offset. */
@@ -416,16 +597,16 @@ public class DiagramService {
         return copy(level).nodes(nodes).connections(connections).levels(levels).build();
     }
 
-    public void removeNode(String origin, String id) {
-        removeNodes(origin, List.of(id));
+    public void removeNode(String origin, List<String> path, String id) {
+        removeNodes(origin, path, List.of(id));
     }
 
-    public void removeNodes(String origin, List<String> ids) {
+    public void removeNodes(String origin, List<String> path, List<String> ids) {
         if (ids == null || ids.isEmpty()) {
             throw new IllegalArgumentException("Indica al menos un id.");
         }
         Set<String> set = new LinkedHashSet<>(ids);
-        mutate(origin, d -> {
+        mutate(origin, root -> updateLevelAt(root, path, d -> {
             List<DiagramNode> removed = d.nodes().stream().filter(n -> set.contains(n.id())).toList();
             List<DiagramNode> nodes = d.nodes().stream().filter(n -> !set.contains(n.id())).toList();
             List<DiagramConnection> conns = d.connections().stream()
@@ -438,7 +619,7 @@ public class DiagramService {
                 }
             }
             return copy(d).nodes(nodes).connections(conns).levels(levels).build();
-        });
+        }));
     }
 
     /** Cambia el orden Z de un nodo: front | back | forward | backward. */
@@ -529,55 +710,60 @@ public class DiagramService {
     }
 
     // ------------------------------------------------------------------ conexiones
-    public DiagramConnection addConnection(String origin, String fromId, String toId,
-            String fromSide, String toSide, String label, String routing, String stroke,
-            String animation, String arrow, String color, Double width, List<Point> waypoints) {
+    public DiagramConnection addConnection(String origin, List<String> path, String fromId,
+            String toId, String fromSide, String toSide, String label, String routing,
+            String stroke, String animation, String arrow, String color, Double width,
+            List<Point> waypoints) {
 
         DiagramData d = repository.load();
-        if (d.node(fromId) == null) {
+        DiagramData level = resolveLevel(d, path);
+        if (level.node(fromId) == null) {
             throw new NoSuchElementException("No existe el nodo origen: " + fromId);
         }
-        if (d.node(toId) == null) {
+        if (level.node(toId) == null) {
             throw new NoSuchElementException("No existe el nodo destino: " + toId);
         }
         DiagramConnection c = new DiagramConnection(newId("c"), new PortRef(fromId, fromSide),
                 new PortRef(toId, toSide), label, routing, stroke, animation, arrow, color,
                 width == null ? 0 : width, waypoints);
 
-        mutate(origin, diag -> copy(diag).nodes(diag.nodes()).connections(append(diag.connections(), c)).build(), List.of(c.id()));
+        mutate(origin, root -> updateLevelAt(root, path,
+                lvl -> copy(lvl).connections(append(lvl.connections(), c)).build()),
+                List.of(c.id()));
         return c;
     }
 
-    public DiagramConnection updateConnection(String origin, String id, String label, String routing,
-            String stroke, String animation, String arrow, String color, Double width,
-            List<Point> waypoints) {
+    public DiagramConnection updateConnection(String origin, List<String> path, String id,
+            String label, String routing, String stroke, String animation, String arrow,
+            String color, Double width, List<Point> waypoints) {
 
-        return patchConnection(origin, id, label, routing, stroke, animation, arrow, color, width,
-                waypoints);
+        return patchConnection(origin, path, id, label, routing, stroke, animation, arrow, color,
+                width, waypoints);
     }
 
     /** Aplica el mismo patch a varias conexiones a la vez. */
-    public List<DiagramConnection> updateConnections(String origin, List<String> ids, String label,
-            String routing, String stroke, String animation, String arrow, String color,
-            Double width) {
+    public List<DiagramConnection> updateConnections(String origin, List<String> path,
+            List<String> ids, String label, String routing, String stroke, String animation,
+            String arrow, String color, Double width) {
 
         if (ids == null || ids.isEmpty()) {
             throw new IllegalArgumentException("Indica al menos un id.");
         }
         List<DiagramConnection> result = new ArrayList<>();
         for (String id : ids) {
-            result.add(patchConnection(origin, id, label, routing, stroke, animation, arrow, color,
-                    width, null));
+            result.add(patchConnection(origin, path, id, label, routing, stroke, animation, arrow,
+                    color, width, null));
         }
         return result;
     }
 
-    private DiagramConnection patchConnection(String origin, String id, String label, String routing,
-            String stroke, String animation, String arrow, String color, Double width,
-            List<Point> waypoints) {
+    private DiagramConnection patchConnection(String origin, List<String> path, String id,
+            String label, String routing, String stroke, String animation, String arrow,
+            String color, Double width, List<Point> waypoints) {
 
         DiagramData d = repository.load();
-        DiagramConnection existing = d.connection(id);
+        DiagramData level = resolveLevel(d, path);
+        DiagramConnection existing = level.connection(id);
         if (existing == null) {
             throw new NoSuchElementException("No existe la conexion: " + id);
         }
@@ -591,7 +777,9 @@ public class DiagramService {
                 width != null ? width : existing.width(),
                 waypoints != null ? waypoints : existing.waypoints());
 
-        mutate(origin, diag -> copy(diag).nodes(diag.nodes()).connections(replaceConnList(diag.connections(), updated)).build(), List.of(id));
+        mutate(origin, root -> updateLevelAt(root, path,
+                lvl -> copy(lvl).connections(replaceConnList(lvl.connections(), updated)).build()),
+                List.of(id));
         return updated;
     }
 
@@ -635,17 +823,17 @@ public class DiagramService {
         return updated;
     }
 
-    public void removeConnection(String origin, String id) {
-        removeConnections(origin, List.of(id));
+    public void removeConnection(String origin, List<String> path, String id) {
+        removeConnections(origin, path, List.of(id));
     }
 
-    public void removeConnections(String origin, List<String> ids) {
+    public void removeConnections(String origin, List<String> path, List<String> ids) {
         if (ids == null || ids.isEmpty()) {
             throw new IllegalArgumentException("Indica al menos un id.");
         }
         Set<String> set = new LinkedHashSet<>(ids);
-        mutate(origin, d -> copy(d).connections(
-                d.connections().stream().filter(c -> !set.contains(c.id())).toList()).build());
+        mutate(origin, root -> updateLevelAt(root, path, lvl -> copy(lvl).connections(
+                lvl.connections().stream().filter(c -> !set.contains(c.id())).toList()).build()));
     }
 
     // ------------------------------------------------------------------ niveles internos
