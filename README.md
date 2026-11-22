@@ -69,14 +69,14 @@ WebSocket. Sin token, opera sobre la sala `DEFAULT` (monousuario).
 | Consultar | `get_diagram`, `get_meta`, `list_nodes`, `get_node`, `list_connections`, `list_presets` |
 | Nodos | `add_node`, `update_node`, `update_nodes` (lote), `move_node`, `resize_node`, `duplicate_node`, `z_order_node`, `align_nodes`, `remove_node`, `remove_nodes` (lote) |
 | Conexiones | `add_connection`, `update_connection`, `update_connections` (lote), `reconnect_connection`, `reverse_connection`, `remove_connection`, `remove_connections` (lote) |
-| Diagrama | `rename_diagram`, `set_background`, `set_grid_size`, `auto_layout`, `clear_diagram` |
+| Diagrama | `rename_diagram`, `set_background`, `set_grid_size`, `auto_layout`, `clear_diagram`, `validate` |
 | Documentación | `get_node_doc`, `set_node_doc`, `append_node_doc`, `set_node_doc_url`, `remove_node_doc`, `get_doc`, `update_doc`, `patch_doc` |
 | Niveles internos | `list_levels`, `get_level`, `create_level`, `remove_level`, `replace_level` |
 | Ver / señalar | `focus_nodes` |
 | Intercambio | `import_diagram`, `export_diagram` |
 
 `auto_layout` ordena todo el diagrama en capas por niveles (clientes → servicios → datos) para
-reducir los cruces de líneas; equivale al botón **Organizar** del editor. Son **45** herramientas.
+reducir los cruces de líneas; equivale al botón **Organizar** del editor. Son **46** herramientas.
 Los niveles internos se direccionan con una `path` de ids de nodos. `get_level`/`replace_level` leen y
 reemplazan un nivel; `add_node`, `update_node(s)`, `remove_node(s)`, `get_node`, las conexiones y
 `focus_nodes` aceptan `path` para operar directamente dentro de un nivel. `create_level` genera
@@ -88,6 +88,14 @@ añaden el `diagram` completo. `counts` suma también los niveles internos. `lis
 `path`, `fields`, `includeDocs` (por defecto `false`) y `filter` (`labelContains`, `stroke`; los
 filtros de metadatos llegan en la fase 6). `export_diagram` acepta `format` (`adraw`/`json`),
 `includeDocs` (por defecto `true`) y `level` para exportar un solo nivel sin fichas.
+
+**Fase 3 (consistencia y concurrencia).** Todas las mutaciones aceptan `expectedRevision`; si el
+diagrama cambió desde esa revisión responden **409** con la revisión actual y no aplican el cambio.
+Los niveles internos vacíos son válidos: `list_levels` los muestra con `nodeCount: 0` y
+`replace_level` los acepta siempre. `validate({ fix? })` revisa conexiones/portales huérfanos,
+niveles no referenciados, `childLevelId` sin nivel, nodos superpuestos e ids duplicados; con
+`fix: true` elimina los huérfanos y corrige las referencias rotas sin tocar los solapes ni los ids
+duplicados. Devuelve `{ ok, valid, fixedCount, issues, revision, counts }`.
 
 Cada nodo puede llevar documentación híbrida: `docUrl` (enlace externo http/https) y `doc`
 (Markdown interno, máximo 100 KB). El agente la gestiona con `get_node_doc`, `set_node_doc`,

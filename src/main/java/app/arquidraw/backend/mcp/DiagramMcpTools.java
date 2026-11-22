@@ -8,16 +8,22 @@ import app.arquidraw.backend.model.NodePresets;
 import app.arquidraw.backend.model.Point;
 import app.arquidraw.backend.model.Viewport;
 import app.arquidraw.backend.service.DiagramService;
+import app.arquidraw.backend.service.DiagramValidator;
+import app.arquidraw.backend.service.RevisionConflictException;
 import app.arquidraw.backend.service.RoomManager;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
+import jakarta.servlet.http.HttpServletResponse;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -51,6 +57,32 @@ public class DiagramMcpTools {
      */
     private DiagramService svc() {
         return rooms.forRoom(McpSalaContext.current());
+    }
+
+    /** Ejecuta una mutacion atomica y marca 409 si la revision no coincide. */
+    private <T> T guarded(Long expectedRevision, Supplier<T> action) {
+        try {
+            return svc().withExpectedRevision(expectedRevision, action);
+        } catch (RevisionConflictException ex) {
+            markConflict();
+            throw ex;
+        }
+    }
+
+    private void guardedRun(Long expectedRevision, Runnable action) {
+        try {
+            svc().withExpectedRevision(expectedRevision, action);
+        } catch (RevisionConflictException ex) {
+            markConflict();
+            throw ex;
+        }
+    }
+
+    private static void markConflict() {
+        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes
+                && attributes.getResponse() != null) {
+            attributes.getResponse().setStatus(HttpServletResponse.SC_CONFLICT);
+        }
     }
 
     // ------------------------------------------------------------------ lectura
@@ -124,9 +156,10 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Id del nodo", required = true) String id,
             @McpToolParam(description = "Documentacion en Markdown", required = true) String doc,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "doc", "verbose"));
-        DiagramNode node = svc().setDoc(ORIGIN, id, doc);
+        DiagramNode node = guarded(expectedRevision, () -> svc().setDoc(ORIGIN, id, doc));
         return mutationResult(node.id(), null, docExtra(node, null, null), verbose);
     }
 
@@ -135,9 +168,10 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Id del nodo", required = true) String id,
             @McpToolParam(description = "Markdown que se anade al final", required = true) String doc,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "doc", "verbose"));
-        DiagramNode node = svc().appendDoc(ORIGIN, id, doc);
+        DiagramNode node = guarded(expectedRevision, () -> svc().appendDoc(ORIGIN, id, doc));
         return mutationResult(node.id(), null, docExtra(node, null, null), verbose);
     }
 
@@ -146,9 +180,10 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Id del nodo", required = true) String id,
             @McpToolParam(description = "URL http(s) de la documentacion; vacio para quitarla", required = true) String docUrl,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "docUrl", "verbose"));
-        DiagramNode node = svc().setDocUrl(ORIGIN, id, docUrl);
+        DiagramNode node = guarded(expectedRevision, () -> svc().setDocUrl(ORIGIN, id, docUrl));
         return mutationResult(node.id(), null, docExtra(node, null, null), verbose);
     }
 
@@ -156,9 +191,10 @@ public class DiagramMcpTools {
     public Map<String, Object> removeNodeDoc(
             @McpToolParam(description = "Id del nodo", required = true) String id,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "verbose"));
-        DiagramNode node = svc().clearDoc(ORIGIN, id);
+        DiagramNode node = guarded(expectedRevision, () -> svc().clearDoc(ORIGIN, id));
         return mutationResult(node.id(), null, docExtra(node, null, null), verbose);
     }
 
@@ -182,11 +218,12 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Id del nodo", required = true) String id,
             @McpToolParam(description = "Nueva ficha Markdown completa", required = true) String markdown,
             @McpToolParam(description = "Ruta de ids hasta el nivel que contiene el nodo (vacia u omitida = raiz)", required = false) List<String> path,
-            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla", required = false) Long expectedRevision,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "markdown", "path", "expectedRevision", "verbose"));
-        DiagramNode node = svc().updateDoc(ORIGIN, path, id, markdown, expectedRevision);
+        DiagramNode node = guarded(expectedRevision,
+                () -> svc().updateDoc(ORIGIN, path, id, markdown, expectedRevision));
         return mutationResult(node.id(), null, docExtra(node, null, null), verbose);
     }
 
@@ -197,12 +234,13 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Markdown del contenido de la seccion", required = true) String markdown,
             @McpToolParam(description = "Ruta de ids hasta el nivel que contiene el nodo (vacia u omitida = raiz)", required = false) List<String> path,
             @McpToolParam(description = "replace (por defecto) o append", required = false) String mode,
-            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla", required = false) Long expectedRevision,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "section", "markdown", "path", "mode",
                 "expectedRevision", "verbose"));
-        DiagramNode node = svc().patchDoc(ORIGIN, path, id, section, markdown, mode, expectedRevision);
+        DiagramNode node = guarded(expectedRevision,
+                () -> svc().patchDoc(ORIGIN, path, id, section, markdown, mode, expectedRevision));
         return mutationResult(node.id(), null,
                 docExtra(node, section, mode == null || mode.isBlank() ? "replace" : mode), verbose);
     }
@@ -253,9 +291,10 @@ public class DiagramMcpTools {
     public Map<String, Object> renameDiagram(
             @McpToolParam(description = "Nuevo nombre", required = true) String name,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("name", "verbose"));
-        svc().rename(ORIGIN, name);
+        guardedRun(expectedRevision, () -> svc().rename(ORIGIN, name));
         return mutationResult(null, null, null, verbose);
     }
 
@@ -263,9 +302,10 @@ public class DiagramMcpTools {
     public Map<String, Object> setBackground(
             @McpToolParam(description = "grid | dots | none", required = true) String background,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("background", "verbose"));
-        svc().setBackground(ORIGIN, background);
+        guardedRun(expectedRevision, () -> svc().setBackground(ORIGIN, background));
         return mutationResult(null, null, null, verbose);
     }
 
@@ -273,22 +313,47 @@ public class DiagramMcpTools {
     public Map<String, Object> setGridSize(
             @McpToolParam(description = "Tamano en unidades del mundo", required = true) Double gridSize,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("gridSize", "verbose"));
-        svc().setGridSize(ORIGIN, gridSize);
+        guardedRun(expectedRevision, () -> svc().setGridSize(ORIGIN, gridSize));
         return mutationResult(null, null, null, verbose);
     }
 
     @McpTool(name = "clear_diagram", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = true, idempotentHint = true, openWorldHint = false), description = "Elimina todos los nodos y conexiones (mantiene nombre y fondo).")
     public Map<String, Object> clearDiagram(
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("verbose"));
-        svc().clear(ORIGIN);
+        guardedRun(expectedRevision, () -> svc().clear(ORIGIN));
         return mutationResult(null, null, null, verbose);
     }
 
     // ------------------------------------------------------------------ nodos
+
+    @McpTool(name = "validate", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false, idempotentHint = true, openWorldHint = false), description = "Revisa la consistencia del diagrama: conexiones/portales huerfanos, niveles sin referencia, childLevelId sin nivel, nodos superpuestos e ids duplicados. Con fix=true corrige los problemas seguros (huerfanos, niveles sin referencia y childLevelId roto). No modifica nada si fix es false.")
+    public Map<String, Object> validate(
+            @McpToolParam(description = "Corregir los problemas que se pueden resolver sin perder datos", required = false) Boolean fix,
+            @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
+            McpSchema.CallToolRequest request) {
+        rejectUnknownFields(request, Set.of("fix", "verbose"));
+        DiagramValidator.Report report = guarded(expectedRevision,
+                () -> svc().validate(ORIGIN, Boolean.TRUE.equals(fix), expectedRevision));
+        DiagramData data = svc().current();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("valid", report.valid());
+        out.put("fixedCount", report.fixedCount());
+        out.put("issues", report.issues());
+        out.put("revision", svc().revision());
+        out.put("counts", counts(data));
+        if (Boolean.TRUE.equals(verbose)) {
+            out.put("diagram", data);
+        }
+        return out;
+    }
 
     @McpTool(name = "add_node", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false, idempotentHint = false, openWorldHint = false), description = "Agrega un componente. Si se indica 'preset' se heredan forma, colores, icono y tamano (ver list_presets). Indica 'technology' (tecnologia principal) y 'summary' (que hace). Puede incluir 'docUrl' y 'doc'. Para un nivel interno, pasa 'path'. Si no pasas x/y, al terminar llama a auto_layout para ordenar el diagrama.")
     public Map<String, Object> addNode(
@@ -311,12 +376,14 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Markdown interno de documentacion (maximo 100 KB)", required = false) String doc,
             @McpToolParam(description = "Ruta de ids hasta el nivel donde se agrega (vacia u omitida = raiz)", required = false) List<String> path,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("label", "sublabel", "technology", "summary", "preset",
                 "x", "y", "width", "height", "shape", "icon", "fill", "stroke", "textColor",
                 "ports", "docUrl", "doc", "path", "verbose"));
-        DiagramNode node = svc().addNode(ORIGIN, path, label, sublabel, technology, summary, preset,
-                x, y, width, height, shape, icon, fill, stroke, textColor, ports, docUrl, doc);
+        DiagramNode node = guarded(expectedRevision, () -> svc().addNode(ORIGIN, path, label, sublabel,
+                technology, summary, preset, x, y, width, height, shape, icon, fill, stroke, textColor,
+                ports, docUrl, doc));
         return mutationResult(node.id(), null, null, verbose);
     }
 
@@ -341,12 +408,14 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Nuevo Markdown interno; vacio para borrarlo", required = false) String doc,
             @McpToolParam(description = "Ruta de ids hasta el nivel que contiene el nodo (vacia u omitida = raiz)", required = false) List<String> path,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "label", "sublabel", "technology", "summary", "x",
                 "y", "width", "height", "shape", "icon", "fill", "stroke", "textColor", "ports",
                 "docUrl", "doc", "path", "verbose"));
-        DiagramNode node = svc().updateNode(ORIGIN, path, id, label, sublabel, technology, summary,
-                x, y, width, height, shape, icon, fill, stroke, textColor, ports, docUrl, doc);
+        DiagramNode node = guarded(expectedRevision, () -> svc().updateNode(ORIGIN, path, id, label,
+                sublabel, technology, summary, x, y, width, height, shape, icon, fill, stroke,
+                textColor, ports, docUrl, doc));
         return mutationResult(node.id(), null, null, verbose);
     }
 
@@ -356,9 +425,10 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Nueva X", required = true) double x,
             @McpToolParam(description = "Nueva Y", required = true) double y,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "x", "y", "verbose"));
-        DiagramNode node = svc().moveNode(ORIGIN, id, x, y);
+        DiagramNode node = guarded(expectedRevision, () -> svc().moveNode(ORIGIN, id, x, y));
         return mutationResult(node.id(), null, null, verbose);
     }
 
@@ -368,9 +438,10 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Nuevo ancho", required = true) double width,
             @McpToolParam(description = "Nuevo alto", required = true) double height,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "width", "height", "verbose"));
-        DiagramNode node = svc().resizeNode(ORIGIN, id, width, height);
+        DiagramNode node = guarded(expectedRevision, () -> svc().resizeNode(ORIGIN, id, width, height));
         return mutationResult(node.id(), null, null, verbose);
     }
 
@@ -379,9 +450,10 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Id del nodo", required = true) String id,
             @McpToolParam(description = "Ruta de ids hasta el nivel que contiene el nodo (vacia u omitida = raiz)", required = false) List<String> path,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "path", "verbose"));
-        svc().removeNode(ORIGIN, path, id);
+        guardedRun(expectedRevision, () -> svc().removeNode(ORIGIN, path, id));
         return mutationResult(id, null, null, verbose);
     }
 
@@ -390,9 +462,10 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Ids de los nodos", required = true) List<String> ids,
             @McpToolParam(description = "Ruta de ids hasta el nivel que contiene los nodos (vacia u omitida = raiz)", required = false) List<String> path,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("ids", "path", "verbose"));
-        svc().removeNodes(ORIGIN, path, ids);
+        guardedRun(expectedRevision, () -> svc().removeNodes(ORIGIN, path, ids));
         return mutationResult(null, ids, null, verbose);
     }
 
@@ -417,12 +490,14 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Nuevo Markdown interno; vacio para borrarlo", required = false) String doc,
             @McpToolParam(description = "Ruta de ids hasta el nivel que contiene los nodos (vacia u omitida = raiz)", required = false) List<String> path,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("ids", "label", "sublabel", "technology", "summary", "x",
                 "y", "width", "height", "shape", "icon", "fill", "stroke", "textColor", "ports",
                 "docUrl", "doc", "path", "verbose"));
-        svc().updateNodes(ORIGIN, path, ids, label, sublabel, technology, summary, x, y, width,
-                height, shape, icon, fill, stroke, textColor, ports, docUrl, doc);
+        guardedRun(expectedRevision, () -> svc().updateNodes(ORIGIN, path, ids, label, sublabel,
+                technology, summary, x, y, width, height, shape, icon, fill, stroke, textColor,
+                ports, docUrl, doc));
         return mutationResult(null, ids, null, verbose);
     }
 
@@ -432,9 +507,11 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Desplazamiento en X", required = false) Double offsetX,
             @McpToolParam(description = "Desplazamiento en Y", required = false) Double offsetY,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "offsetX", "offsetY", "verbose"));
-        DiagramNode node = svc().duplicateNode(ORIGIN, id, offsetX, offsetY);
+        DiagramNode node = guarded(expectedRevision,
+                () -> svc().duplicateNode(ORIGIN, id, offsetX, offsetY));
         return mutationResult(node.id(), null, null, verbose);
     }
 
@@ -443,9 +520,10 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Id del nodo", required = true) String id,
             @McpToolParam(description = "front | back | forward | backward", required = true) String action,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "action", "verbose"));
-        DiagramNode node = svc().zOrder(ORIGIN, id, action);
+        DiagramNode node = guarded(expectedRevision, () -> svc().zOrder(ORIGIN, id, action));
         return mutationResult(node.id(), null, null, verbose);
     }
 
@@ -454,9 +532,10 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Ids de al menos dos nodos", required = true) List<String> ids,
             @McpToolParam(description = "left | right | top | bottom | centerX | centerY", required = true) String direction,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("ids", "direction", "verbose"));
-        svc().align(ORIGIN, ids, direction);
+        guardedRun(expectedRevision, () -> svc().align(ORIGIN, ids, direction));
         return mutationResult(null, ids, null, verbose);
     }
 
@@ -467,9 +546,11 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Separacion entre nodos dentro de una capa (>=44, por defecto 46)", required = false) Double nodeGap,
             @McpToolParam(description = "Agrupar por rol (por defecto false): clientes (icono client/mobile/browser/actor) en la primera columna; datos (database/cache o forma cylinder) y externos (external) en las ultimas. Agrupa mejor pero suele alargar lineas", required = false) Boolean byRole,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("direction", "layerGap", "nodeGap", "byRole", "verbose"));
-        List<DiagramNode> nodes = svc().autoLayout(ORIGIN, direction, layerGap, nodeGap, byRole);
+        List<DiagramNode> nodes = guarded(expectedRevision,
+                () -> svc().autoLayout(ORIGIN, direction, layerGap, nodeGap, byRole));
         return mutationResult(null, nodes.stream().map(DiagramNode::id).toList(), null, verbose);
     }
 
@@ -490,11 +571,13 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Puntos de paso manuales [{x,y},...] para forzar el recorrido", required = false) List<Point> waypoints,
             @McpToolParam(description = "Ruta de ids hasta el nivel donde se conecta (vacia u omitida = raiz)", required = false) List<String> path,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("from", "to", "fromSide", "toSide", "label", "routing",
                 "stroke", "animation", "arrow", "color", "width", "waypoints", "path", "verbose"));
-        DiagramConnection connection = svc().addConnection(ORIGIN, path, from, to, fromSide, toSide,
-                label, routing, stroke, animation, arrow, color, width, waypoints);
+        DiagramConnection connection = guarded(expectedRevision,
+                () -> svc().addConnection(ORIGIN, path, from, to, fromSide, toSide, label, routing,
+                        stroke, animation, arrow, color, width, waypoints));
         return mutationResult(connection.id(), null, null, verbose);
     }
 
@@ -511,11 +594,13 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Puntos de paso manuales [{x,y},...] (vacio = recorrido automatico)", required = false) List<Point> waypoints,
             @McpToolParam(description = "Ruta de ids hasta el nivel que contiene la conexion (vacia u omitida = raiz)", required = false) List<String> path,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "label", "routing", "stroke", "animation", "arrow",
                 "color", "width", "waypoints", "path", "verbose"));
-        DiagramConnection connection = svc().updateConnection(ORIGIN, path, id, label, routing,
-                stroke, animation, arrow, color, width, waypoints);
+        DiagramConnection connection = guarded(expectedRevision,
+                () -> svc().updateConnection(ORIGIN, path, id, label, routing, stroke, animation,
+                        arrow, color, width, waypoints));
         return mutationResult(connection.id(), null, null, verbose);
     }
 
@@ -524,9 +609,10 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Id de la conexion", required = true) String id,
             @McpToolParam(description = "Ruta de ids hasta el nivel que contiene la conexion (vacia u omitida = raiz)", required = false) List<String> path,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "path", "verbose"));
-        svc().removeConnection(ORIGIN, path, id);
+        guardedRun(expectedRevision, () -> svc().removeConnection(ORIGIN, path, id));
         return mutationResult(id, null, null, verbose);
     }
 
@@ -535,9 +621,10 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Ids de las conexiones", required = true) List<String> ids,
             @McpToolParam(description = "Ruta de ids hasta el nivel que contiene las conexiones (vacia u omitida = raiz)", required = false) List<String> path,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("ids", "path", "verbose"));
-        svc().removeConnections(ORIGIN, path, ids);
+        guardedRun(expectedRevision, () -> svc().removeConnections(ORIGIN, path, ids));
         return mutationResult(null, ids, null, verbose);
     }
 
@@ -553,11 +640,12 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Nuevo grosor", required = false) Double width,
             @McpToolParam(description = "Ruta de ids hasta el nivel que contiene las conexiones (vacia u omitida = raiz)", required = false) List<String> path,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("ids", "label", "routing", "stroke", "animation", "arrow",
                 "color", "width", "path", "verbose"));
-        svc().updateConnections(ORIGIN, path, ids, label, routing, stroke, animation, arrow,
-                color, width);
+        guardedRun(expectedRevision, () -> svc().updateConnections(ORIGIN, path, ids, label, routing,
+                stroke, animation, arrow, color, width));
         return mutationResult(null, ids, null, verbose);
     }
 
@@ -569,10 +657,12 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Nuevo nodo destino", required = false) String toNode,
             @McpToolParam(description = "Nuevo lado de entrada (top/right/bottom/left/auto)", required = false) String toSide,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "fromNode", "fromSide", "toNode", "toSide",
                 "verbose"));
-        DiagramConnection connection = svc().reconnect(ORIGIN, id, fromNode, fromSide, toNode, toSide);
+        DiagramConnection connection = guarded(expectedRevision,
+                () -> svc().reconnect(ORIGIN, id, fromNode, fromSide, toNode, toSide));
         return mutationResult(connection.id(), null, null, verbose);
     }
 
@@ -580,9 +670,11 @@ public class DiagramMcpTools {
     public Map<String, Object> reverseConnection(
             @McpToolParam(description = "Id de la conexion", required = true) String id,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("id", "verbose"));
-        DiagramConnection connection = svc().reverseConnection(ORIGIN, id);
+        DiagramConnection connection = guarded(expectedRevision,
+                () -> svc().reverseConnection(ORIGIN, id));
         return mutationResult(connection.id(), null, null, verbose);
     }
 
@@ -607,10 +699,11 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Nombre del nivel (por defecto, el del nodo)", required = false) String name,
             @McpToolParam(description = "Ruta de ids hasta el nivel que contiene el nodo (vacia = raiz)", required = false) List<String> path,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("nodeId", "name", "path", "verbose"));
         List<String> levelPath = path == null ? List.of() : path;
-        svc().createLevel(ORIGIN, levelPath, nodeId, name);
+        guarded(expectedRevision, () -> svc().createLevel(ORIGIN, levelPath, nodeId, name));
         svc().focus(ORIGIN, List.of(nodeId));
         List<String> childPath = new ArrayList<>(levelPath);
         childPath.add(nodeId);
@@ -624,9 +717,11 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Id del nodo contenedor", required = true) String nodeId,
             @McpToolParam(description = "Ruta de ids hasta el nivel que contiene el nodo (vacia = raiz)", required = false) List<String> path,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("nodeId", "path", "verbose"));
-        svc().removeLevel(ORIGIN, path == null ? List.of() : path, nodeId);
+        guardedRun(expectedRevision,
+                () -> svc().removeLevel(ORIGIN, path == null ? List.of() : path, nodeId));
         return mutationResult(nodeId, null, null, verbose);
     }
 
@@ -635,10 +730,11 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Ids de nodos desde la raiz hasta el nivel interno", required = true) List<String> path,
             @McpToolParam(description = "DiagramData del nivel", required = true) Map<String, Object> data,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("path", "data", "verbose"));
         DiagramData level = mapper.convertValue(data, DiagramData.class);
-        svc().replaceLevel(ORIGIN, path, level);
+        guardedRun(expectedRevision, () -> svc().replaceLevel(ORIGIN, path, level));
         String id = path == null || path.isEmpty() ? null : path.get(path.size() - 1);
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("path", path);
@@ -673,9 +769,10 @@ public class DiagramMcpTools {
     public Map<String, Object> importDiagram(
             @McpToolParam(description = "JSON del proyecto", required = true) String json,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("json", "verbose"));
-        svc().replace(parseDiagram(json), ORIGIN);
+        guardedRun(expectedRevision, () -> svc().replace(parseDiagram(json), ORIGIN));
         return mutationResult(null, null, null, verbose);
     }
 
@@ -862,7 +959,7 @@ public class DiagramMcpTools {
             return;
         }
         List<String> unknown = request.arguments().keySet().stream()
-                .filter(key -> !allowed.contains(key))
+                .filter(key -> !allowed.contains(key) && !"expectedRevision".equals(key))
                 .sorted()
                 .toList();
         if (!unknown.isEmpty()) {

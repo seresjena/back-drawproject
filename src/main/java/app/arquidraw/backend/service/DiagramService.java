@@ -21,6 +21,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.context.ApplicationEventPublisher;
@@ -83,6 +84,21 @@ public class DiagramService {
 
     public long revision() {
         return revision.get();
+    }
+
+    /**
+     * Ejecuta una mutacion comprobando antes la revision esperada y manteniendo
+     * el bloqueo hasta terminarla, para que la comprobacion y el cambio sean
+     * atomicos frente a otro escritor.
+     */
+    public synchronized <T> T withExpectedRevision(Long expectedRevision, Supplier<T> action) {
+        checkRevision(expectedRevision);
+        return action.get();
+    }
+
+    public synchronized void withExpectedRevision(Long expectedRevision, Runnable action) {
+        checkRevision(expectedRevision);
+        action.run();
     }
 
     /** Ultimo viewport reportado por un editor, o null si ninguno se ha reportado. */
@@ -161,6 +177,26 @@ public class DiagramService {
 
     public DiagramData clear(String origin) {
         return mutate(origin, d -> copy(d).nodes(List.of()).connections(List.of()).levels(Map.of()).build());
+    }
+
+    /**
+     * Valida el arbol completo y, con {@code fix}, corrige los problemas que
+     * se pueden resolver sin perder datos. Solo sube la revision si algo cambia.
+     */
+    public synchronized DiagramValidator.Report validate(String origin, boolean fix,
+            Long expectedRevision) {
+        checkRevision(expectedRevision);
+        DiagramData current = repository.load();
+        List<DiagramValidator.Issue> before = DiagramValidator.validate(current);
+        if (fix && before.stream().anyMatch(DiagramValidator.Issue::fixable)) {
+            DiagramData fixed = DiagramValidator.fix(current);
+            if (!fixed.equals(current)) {
+                replace(fixed, origin);
+            }
+        }
+        List<DiagramValidator.Issue> remaining = DiagramValidator.validate(repository.load());
+        int fixedCount = Math.max(0, before.size() - remaining.size());
+        return new DiagramValidator.Report(remaining.isEmpty(), fixedCount, remaining);
     }
 
     // ------------------------------------------------------------------ nodos
@@ -281,9 +317,8 @@ public class DiagramService {
     /** Reemplaza la ficha de un nodo de un nivel concreto. */
     public DiagramNode updateDoc(String origin, List<String> path, String id, String markdown,
             Long expectedRevision) {
-        checkRevision(expectedRevision);
-        return patchDocumentationAt(origin, path, id, null,
-                markdown == null ? "" : markdown, false);
+        return withExpectedRevision(expectedRevision, () -> patchDocumentationAt(origin, path, id, null,
+                markdown == null ? "" : markdown, false));
     }
 
     /**
@@ -292,10 +327,11 @@ public class DiagramService {
      */
     public DiagramNode patchDoc(String origin, List<String> path, String id, String section,
             String markdown, String mode, Long expectedRevision) {
-        checkRevision(expectedRevision);
-        DiagramNode existing = nodeAt(path, id);
-        String next = patchSection(existing.doc(), section, markdown, mode);
-        return patchDocumentationAt(origin, path, id, null, next, false);
+        return withExpectedRevision(expectedRevision, () -> {
+            DiagramNode existing = nodeAt(path, id);
+            String next = patchSection(existing.doc(), section, markdown, mode);
+            return patchDocumentationAt(origin, path, id, null, next, false);
+        });
     }
 
     private DiagramNode patchDocumentationAt(String origin, List<String> path, String id,
@@ -323,8 +359,7 @@ public class DiagramService {
 
     private void checkRevision(Long expectedRevision) {
         if (expectedRevision != null && expectedRevision.longValue() != revision.get()) {
-            throw new IllegalStateException("Conflicto de revision: esperada " + expectedRevision
-                    + ", actual " + revision.get() + ".");
+            throw new RevisionConflictException(expectedRevision, revision.get());
         }
     }
 

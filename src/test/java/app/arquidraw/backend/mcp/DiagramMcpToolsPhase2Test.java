@@ -84,7 +84,7 @@ class DiagramMcpToolsPhase2Test {
     @Test
     void unaMutacionDevuelveResumenCompactoYVerboseIncluyeElDiagrama() {
         Map<String, Object> compact = tools.patchDoc("n_auth", "Estado", "Listo", BACKEND, null,
-                null, false, null);
+                false, null, null);
 
         assertThat(compact).containsEntry("ok", true).containsEntry("id", "n_auth")
                 .containsEntry("revision", 2L).containsEntry("warnings", List.of());
@@ -96,7 +96,7 @@ class DiagramMcpToolsPhase2Test {
         assertThat(mapper.writeValueAsString(compact).length()).isLessThan(2_000);
 
         Map<String, Object> verbose = tools.patchDoc("n_auth", "Estado", "Hecho", BACKEND, null,
-                null, true, null);
+                true, null, null);
         assertThat(verbose).containsKey("diagram");
     }
 
