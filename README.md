@@ -70,13 +70,15 @@ WebSocket. Sin token, opera sobre la sala `DEFAULT` (monousuario).
 | Nodos | `add_node`, `update_node`, `update_nodes` (lote), `move_node`, `resize_node`, `duplicate_node`, `z_order_node`, `align_nodes`, `remove_node`, `remove_nodes` (lote) |
 | Conexiones | `add_connection`, `update_connection`, `update_connections` (lote), `reconnect_connection`, `reverse_connection`, `remove_connection`, `remove_connections` (lote) |
 | Diagrama | `rename_diagram`, `set_background`, `set_grid_size`, `auto_layout`, `clear_diagram`, `validate` |
+| Lotes | `batch` (varias operaciones en orden, todo o nada) |
 | Documentación | `get_node_doc`, `set_node_doc`, `append_node_doc`, `set_node_doc_url`, `remove_node_doc`, `get_doc`, `update_doc`, `patch_doc` |
 | Niveles internos | `list_levels`, `get_level`, `create_level`, `remove_level`, `replace_level` |
+| Respaldo | `snapshot`, `list_snapshots`, `restore`, `undo` |
 | Ver / señalar | `focus_nodes` |
 | Intercambio | `import_diagram`, `export_diagram` |
 
 `auto_layout` ordena todo el diagrama en capas por niveles (clientes → servicios → datos) para
-reducir los cruces de líneas; equivale al botón **Organizar** del editor. Son **46** herramientas.
+reducir los cruces de líneas; equivale al botón **Organizar** del editor. Son **51** herramientas.
 Los niveles internos se direccionan con una `path` de ids de nodos. `get_level`/`replace_level` leen y
 reemplazan un nivel; `add_node`, `update_node(s)`, `remove_node(s)`, `get_node`, las conexiones y
 `focus_nodes` aceptan `path` para operar directamente dentro de un nivel. `create_level` genera
@@ -91,11 +93,44 @@ filtros de metadatos llegan en la fase 6). `export_diagram` acepta `format` (`ad
 
 **Fase 3 (consistencia y concurrencia).** Todas las mutaciones aceptan `expectedRevision`; si el
 diagrama cambió desde esa revisión responden **409** con la revisión actual y no aplican el cambio.
+El error MCP muestra el conflicto una sola vez y añade una pista para reintentar:
+
+```text
+Conflicto de revision (409): esperada 0, actual 1.
+No se aplico ningun cambio; reintenta con get_meta.
+```
+
 Los niveles internos vacíos son válidos: `list_levels` los muestra con `nodeCount: 0` y
 `replace_level` los acepta siempre. `validate({ fix? })` revisa conexiones/portales huérfanos,
 niveles no referenciados, `childLevelId` sin nivel, nodos superpuestos e ids duplicados; con
 `fix: true` elimina los huérfanos y corrige las referencias rotas sin tocar los solapes ni los ids
 duplicados. Devuelve `{ ok, valid, fixedCount, issues, revision, counts }`.
+
+**Fase 4 (lotes e importación parcial).** `batch({ operations, expectedRevision? })` aplica varias
+operaciones en orden y **todo o nada** sobre una copia de trabajo: si una falla, el diagrama no
+cambia. Cada operación usa los mismos parámetros que su tool (`add_node`, `update_node`,
+`add_connection`, `remove_node`, `patch_doc`, etc.) y admite `path`; también se acepta
+`{ tool, args: { ... } }`. El lote entero genera **una sola revisión** y un solo evento WebSocket.
+La respuesta es `{ ok, revision, ids, results, counts, warnings }`: `ids` son los ids creados en
+orden y `results` detalla cada operación. En `batch`, `add_node` y `add_connection` aceptan un `id`
+explícito para poder referenciar lo creado en operaciones posteriores del mismo lote.
+
+`import_diagram` mantiene el reemplazo completo por defecto; con `merge: true` hace upsert por id en
+nodos, conexiones y niveles **sin borrar** lo que no venga en el JSON. Conserva nombre, fondo y
+cuadrícula del diagrama actual y, en nodos existentes, su tamaño, nivel interno y portal si el
+fragmento no los trae. La lectura del JSON tolera campos numéricos ausentes o nulos para admitir
+fragmentos parciales.
+
+**Fase 5 (respaldo y deshacer).** `snapshot({ label? })` guarda un punto de restauración y
+`list_snapshots()` los lista (más reciente primero) con etiqueta, revisión, autor (`origin`),
+`auto` y counts. `restore({ snapshotId })` vuelve exactamente a ese estado con una sola revisión y
+evento; el propio restore se puede deshacer. `undo({ steps? = 1 })` deshace los últimos cambios
+sobre una pila de estados previos y devuelve `undone` con revisión, origen y fecha. Hay snapshots
+automáticos antes de `clear_diagram`, `import_diagram`, `replace_level` y lotes grandes (≥10
+operaciones, operaciones destructivas o borrados masivos). Todo vive **en memoria por sala** y se
+pierde al reiniciar el backend: historial de 50 estados, 20 snapshots manuales y 10 automáticos.
+La primera carga que llena un diagrama vacío no se puede deshacer a la sala vacía.
+`snapshot`/`restore`/`undo` no se aceptan dentro de `batch`.
 
 Cada nodo puede llevar documentación híbrida: `docUrl` (enlace externo http/https) y `doc`
 (Markdown interno, máximo 100 KB). El agente la gestiona con `get_node_doc`, `set_node_doc`,
@@ -159,10 +194,11 @@ para que `get_meta` informe la región visible.
 src/main/java/app/arquidraw/backend/
   ArquiDrawBackendApplication.java      # arranque
   model/        PortRef, DiagramNode, DiagramConnection, DiagramData, Bounds, Viewport, NodePreset(s)
-  service/      DiagramRepository, InMemoryDiagramRepository, DiagramService, DiagramChangedEvent
+  service/      DiagramRepository, InMemoryDiagramRepository, DiagramService, DiagramMerger,
+                DiagramValidator, DiagramChangedEvent
   web/          WsClientMessage, WsServerMessage, DiagramWsHandler, WebSocketConfig, WebConfig,
                 DocController, NodeDocument
-  mcp/          DiagramMcpTools, ArquiDrawResources
+  mcp/          DiagramMcpTools, BatchOperations, DiagramJson, ArquiDrawResources
 src/main/resources/
   application.properties                # puerto, MCP, log
   arquidraw.schema.json                 # contrato del formato de proyecto

@@ -11,7 +11,11 @@ import app.arquidraw.backend.model.PortRef;
 import app.arquidraw.backend.model.ViewRequest;
 import app.arquidraw.backend.model.Viewport;
 import java.net.URI;
+import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -55,10 +59,40 @@ public class DiagramService {
     /** Limite de la URL externa de documentacion. */
     private static final int MAX_DOC_URL_LENGTH = 2048;
 
+    /** Limites del historial y de los snapshots (viven en memoria por sala). */
+    private static final int MAX_HISTORY = 50;
+    private static final int MAX_MANUAL_SNAPSHOTS = 20;
+    private static final int MAX_AUTO_SNAPSHOTS = 10;
+
+    /** Metadatos de un snapshot, sin el diagrama completo. */
+    public record SnapshotInfo(String id, String label, long revision, String createdAt, String origin,
+            boolean auto, int nodes, int connections, int levels) {
+    }
+
+    /** Cambio deshecho, con la revision y el autor que lo produjo. */
+    public record UndoEntry(long revision, String origin, String createdAt) {
+    }
+
+    /** Resultado de deshacer uno o varios cambios. */
+    public record UndoResult(DiagramData data, long revision, int steps, List<UndoEntry> undone) {
+    }
+
+    /** Resultado de restaurar un snapshot. */
+    public record RestoreResult(SnapshotInfo snapshot, DiagramData data) {
+    }
+
+    private record HistoryEntry(DiagramData data, long revision, String origin, String createdAt) {
+    }
+
+    private record SnapshotEntry(SnapshotInfo info, DiagramData data) {
+    }
+
     private final DiagramRepository repository;
     private final ApplicationEventPublisher events;
     private final String room;
     private final AtomicLong revision = new AtomicLong();
+    private final Deque<HistoryEntry> undoStack = new ArrayDeque<>();
+    private final List<SnapshotEntry> snapshots = new ArrayList<>();
 
     /**
      * Ultimo viewport reportado por un editor (tamano, pan y zoom). No forma
@@ -118,12 +152,183 @@ public class DiagramService {
 
     /** Reemplaza el diagrama completo y notifica a todos, resaltando ciertos ids. */
     public synchronized DiagramData replace(DiagramData data, String origin, List<String> highlight) {
+        String author = origin == null ? ORIGIN_SERVER : origin;
+        DiagramData current = repository.load();
+        DiagramData next = data == null ? DiagramData.empty() : data;
+        // La primera carga que llena un diagrama vacio se trata como estado
+        // inicial: no se puede "deshacer" a una sala vacia por accidente.
+        if (hasContent(current) || !hasContent(next)) {
+            if (undoStack.size() >= MAX_HISTORY) {
+                undoStack.removeFirst();
+            }
+            undoStack.addLast(new HistoryEntry(current, revision.get() + 1, author,
+                    Instant.now().toString()));
+        }
+        return apply(next, author, highlight);
+    }
+
+    /** Guarda y publica un estado sin registrarlo en el historial (para undo). */
+    private synchronized DiagramData apply(DiagramData data, String origin, List<String> highlight) {
         DiagramData next = data == null ? DiagramData.empty() : data;
         repository.save(next);
         long rev = revision.incrementAndGet();
         events.publishEvent(new DiagramChangedEvent(next, rev,
                 origin == null ? ORIGIN_SERVER : origin, highlight == null ? List.of() : highlight, room));
         return next;
+    }
+
+    // ------------------------------------------------------------------ historial y snapshots
+
+    /** Crea un snapshot manual con etiqueta. */
+    public synchronized SnapshotInfo snapshot(String origin, String label) {
+        return saveSnapshot(origin, label, false);
+    }
+
+    /**
+     * Snapshot automatico antes de una operacion destructiva. Si el diagrama
+     * esta vacio no se guarda nada (no aporta nada y ocupa memoria).
+     */
+    public synchronized SnapshotInfo snapshotAuto(String origin, String label) {
+        if (!hasContent(repository.load())) {
+            return null;
+        }
+        return saveSnapshot(origin, label, true);
+    }
+
+    /** Snapshots de la sala, del mas reciente al mas antiguo. */
+    public synchronized List<SnapshotInfo> snapshots() {
+        List<SnapshotInfo> out = new ArrayList<>(snapshots.size());
+        for (int i = snapshots.size() - 1; i >= 0; i--) {
+            out.add(snapshots.get(i).info());
+        }
+        return List.copyOf(out);
+    }
+
+    /** Restaura un snapshot; el cambio en si tambien se puede deshacer. */
+    public synchronized RestoreResult restore(String origin, String snapshotId) {
+        SnapshotEntry entry = findSnapshot(snapshotId);
+        if (entry == null) {
+            throw new NoSuchElementException("No existe el snapshot: " + snapshotId);
+        }
+        DiagramData data = replace(entry.data(), origin);
+        return new RestoreResult(entry.info(), data);
+    }
+
+    /**
+     * Deshace los ultimos cambios. Usa una pila de estados previos, no numeros
+     * de revision, para que un segundo undo siga retrocediendo y no vuelva hacia
+     * delante. Devuelve el autor y la revision de cada cambio deshecho.
+     */
+    public synchronized UndoResult undo(String origin, int steps) {
+        if (steps < 1) {
+            throw new IllegalArgumentException("steps debe ser >= 1.");
+        }
+        if (undoStack.isEmpty()) {
+            throw new IllegalStateException("No hay cambios para deshacer.");
+        }
+        if (steps > undoStack.size()) {
+            throw new IllegalArgumentException("Solo hay " + undoStack.size()
+                    + " cambios para deshacer.");
+        }
+        List<UndoEntry> undone = new ArrayList<>(steps);
+        HistoryEntry target = null;
+        for (int i = 0; i < steps; i++) {
+            HistoryEntry entry = undoStack.removeLast();
+            undone.add(new UndoEntry(entry.revision(), entry.origin(), entry.createdAt()));
+            target = entry;
+        }
+        Collections.reverse(undone);
+        DiagramData data = apply(target.data(), origin, List.of());
+        return new UndoResult(data, revision.get(), steps, List.copyOf(undone));
+    }
+
+    private SnapshotInfo saveSnapshot(String origin, String label, boolean auto) {
+        if (auto) {
+            while (countAutoSnapshots() >= MAX_AUTO_SNAPSHOTS && removeOldestAuto()) {
+                // Poda el automatico mas antiguo para dejar sitio al nuevo.
+            }
+        } else if (countManualSnapshots() >= MAX_MANUAL_SNAPSHOTS) {
+            throw new IllegalArgumentException("Limite de snapshots manuales alcanzado ("
+                    + MAX_MANUAL_SNAPSHOTS + "). Reinicia la sesion para limpiar el historial.");
+        }
+        DiagramData data = repository.load();
+        int[] counts = countTree(data);
+        String cleanLabel = label == null || label.isBlank()
+                ? (auto ? "Automatico" : "Manual") : label.trim();
+        SnapshotInfo info = new SnapshotInfo(newSnapshotId(), cleanLabel, revision.get(),
+                Instant.now().toString(), origin == null ? ORIGIN_SERVER : origin, auto, counts[0],
+                counts[1], counts[2]);
+        snapshots.add(new SnapshotEntry(info, data));
+        return info;
+    }
+
+    private SnapshotEntry findSnapshot(String id) {
+        if (id == null) {
+            return null;
+        }
+        for (SnapshotEntry entry : snapshots) {
+            if (entry.info().id().equals(id)) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    private String newSnapshotId() {
+        String id;
+        do {
+            id = "s_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        } while (findSnapshot(id) != null);
+        return id;
+    }
+
+    private int countAutoSnapshots() {
+        int count = 0;
+        for (SnapshotEntry entry : snapshots) {
+            if (entry.info().auto()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private int countManualSnapshots() {
+        int count = 0;
+        for (SnapshotEntry entry : snapshots) {
+            if (!entry.info().auto()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private boolean removeOldestAuto() {
+        for (int i = 0; i < snapshots.size(); i++) {
+            if (snapshots.get(i).info().auto()) {
+                snapshots.remove(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasContent(DiagramData data) {
+        return !data.nodes().isEmpty() || !data.connections().isEmpty() || !data.levels().isEmpty();
+    }
+
+    private static int[] countTree(DiagramData data) {
+        int[] counts = new int[3];
+        collectCounts(data, counts);
+        return counts;
+    }
+
+    private static void collectCounts(DiagramData data, int[] counts) {
+        counts[0] += data.nodes().size();
+        counts[1] += data.connections().size();
+        counts[2] += data.levels().size();
+        for (DiagramData child : data.levels().values()) {
+            collectCounts(child, counts);
+        }
     }
 
     /** Resalta ids sin cambiar el diagrama (para que el usuario vea que "mira" el agente). */
@@ -180,6 +385,19 @@ public class DiagramService {
     }
 
     /**
+     * Importa un diagrama completo. Con {@code merge} hace upsert por id (nodos,
+     * conexiones y niveles) sin borrar lo que no venga en el JSON; sin merge
+     * reemplaza todo el diagrama, como la importacion clasica.
+     */
+    public synchronized DiagramData importDiagram(String origin, DiagramData incoming, boolean merge) {
+        DiagramData next = merge
+                ? DiagramMerger.merge(repository.load(), incoming)
+                : (incoming == null ? DiagramData.empty() : incoming);
+        List<String> highlight = merge && incoming != null ? DiagramMerger.ids(incoming) : List.of();
+        return replace(next, origin, highlight);
+    }
+
+    /**
      * Valida el arbol completo y, con {@code fix}, corrige los problemas que
      * se pueden resolver sin perder datos. Solo sube la revision si algo cambia.
      */
@@ -205,6 +423,19 @@ public class DiagramService {
             String technology, String summary, String presetKey, Double x, Double y, Double width,
             Double height, String shape, String icon, String fill, String stroke, String textColor,
             List<String> ports, String docUrl, String doc) {
+        return addNode(origin, path, null, label, sublabel, technology, summary, presetKey, x, y,
+                width, height, shape, icon, fill, stroke, textColor, ports, docUrl, doc);
+    }
+
+    /**
+     * Igual que {@link #addNode(String, List, String, String, String, String, String, Double,
+     * Double, Double, Double, String, String, String, String, String, List, String, String)} pero
+     * permite fijar el id (util para lotes atomicos que luego conectan los nodos creados).
+     */
+    public DiagramNode addNode(String origin, List<String> path, String id, String label,
+            String sublabel, String technology, String summary, String presetKey, Double x, Double y,
+            Double width, Double height, String shape, String icon, String fill, String stroke,
+            String textColor, List<String> ports, String docUrl, String doc) {
 
         DiagramData d = repository.load();
         DiagramData target = resolveLevel(d, path);
@@ -213,7 +444,10 @@ public class DiagramService {
             preset = NodePresets.defaultPreset();
         }
 
-        String id = newId("n");
+        String nodeId = id == null || id.isBlank() ? newId("n") : id.trim();
+        if (findNode(d, nodeId) != null) {
+            throw new IllegalArgumentException("Ya existe un nodo con id: " + nodeId);
+        }
         double[] pos = autoPosition(target, x, y);
         double w = width != null ? width : preset.width();
         double h = height != null ? height : preset.height();
@@ -224,7 +458,7 @@ public class DiagramService {
         String tc = textColor != null ? textColor : preset.textColor();
         List<String> p = ports != null ? ports : List.of("top", "right", "bottom", "left");
 
-        DiagramNode node = new DiagramNode(id, pos[0], pos[1], w, h,
+        DiagramNode node = new DiagramNode(nodeId, pos[0], pos[1], w, h,
                 (label == null || label.isBlank()) ? preset.label() : label,
                 sublabel == null ? "" : sublabel,
                 technology == null ? "" : technology,
@@ -234,7 +468,7 @@ public class DiagramService {
                 sh, fi, st, tc, ic, p, null, null);
 
         mutate(origin, root -> updateLevelAt(root, path,
-                level -> copy(level).nodes(append(level.nodes(), node)).build()), List.of(id));
+                level -> copy(level).nodes(append(level.nodes(), node)).build()), List.of(nodeId));
         return node;
     }
 
@@ -277,6 +511,20 @@ public class DiagramService {
         }
         for (DiagramData child : level.levels().values()) {
             DiagramNode found = findNode(child, id);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    private static DiagramConnection findConnection(DiagramData level, String id) {
+        DiagramConnection connection = level.connection(id);
+        if (connection != null) {
+            return connection;
+        }
+        for (DiagramData child : level.levels().values()) {
+            DiagramConnection found = findConnection(child, id);
             if (found != null) {
                 return found;
             }
@@ -749,6 +997,18 @@ public class DiagramService {
             String toId, String fromSide, String toSide, String label, String routing,
             String stroke, String animation, String arrow, String color, Double width,
             List<Point> waypoints) {
+        return addConnection(origin, path, null, fromId, toId, fromSide, toSide, label, routing,
+                stroke, animation, arrow, color, width, waypoints);
+    }
+
+    /**
+     * Igual que la conexion normal pero permite fijar el id (para lotes atomicos
+     * que referencian la conexion recien creada).
+     */
+    public DiagramConnection addConnection(String origin, List<String> path, String id,
+            String fromId, String toId, String fromSide, String toSide, String label, String routing,
+            String stroke, String animation, String arrow, String color, Double width,
+            List<Point> waypoints) {
 
         DiagramData d = repository.load();
         DiagramData level = resolveLevel(d, path);
@@ -758,7 +1018,11 @@ public class DiagramService {
         if (level.node(toId) == null) {
             throw new NoSuchElementException("No existe el nodo destino: " + toId);
         }
-        DiagramConnection c = new DiagramConnection(newId("c"), new PortRef(fromId, fromSide),
+        String connectionId = id == null || id.isBlank() ? newId("c") : id.trim();
+        if (findConnection(d, connectionId) != null) {
+            throw new IllegalArgumentException("Ya existe una conexion con id: " + connectionId);
+        }
+        DiagramConnection c = new DiagramConnection(connectionId, new PortRef(fromId, fromSide),
                 new PortRef(toId, toSide), label, routing, stroke, animation, arrow, color,
                 width == null ? 0 : width, waypoints);
 

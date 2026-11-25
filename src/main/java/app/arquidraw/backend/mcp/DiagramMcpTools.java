@@ -9,10 +9,12 @@ import app.arquidraw.backend.model.Point;
 import app.arquidraw.backend.model.Viewport;
 import app.arquidraw.backend.service.DiagramService;
 import app.arquidraw.backend.service.DiagramValidator;
+import app.arquidraw.backend.service.InMemoryDiagramRepository;
 import app.arquidraw.backend.service.RevisionConflictException;
 import app.arquidraw.backend.service.RoomManager;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -24,7 +26,6 @@ import org.springframework.ai.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Service;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -36,6 +37,13 @@ import tools.jackson.databind.ObjectMapper;
 public class DiagramMcpTools {
 
     private static final String ORIGIN = DiagramService.ORIGIN_MCP;
+
+    /** Un batch con este numero de operaciones o mas guarda un snapshot automatico. */
+    private static final int BATCH_SNAPSHOT_THRESHOLD = 10;
+
+    /** Operaciones de batch que siempre merecen snapshot automatico. */
+    private static final Set<String> BATCH_SNAPSHOT_TOOLS = Set.of("clear_diagram",
+            "import_diagram", "replace_level");
 
     /** Campos que puede proyectar list_nodes. */
     private static final List<String> NODE_FIELDS = List.of("id", "x", "y", "width", "height",
@@ -326,8 +334,116 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("verbose"));
-        guardedRun(expectedRevision, () -> svc().clear(ORIGIN));
+        guardedRun(expectedRevision, () -> {
+            svc().snapshotAuto(ORIGIN, "Antes de clear_diagram");
+            svc().clear(ORIGIN);
+        });
         return mutationResult(null, null, null, verbose);
+    }
+
+    @McpTool(name = "batch", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false, idempotentHint = false, openWorldHint = false), description = "Aplica varias operaciones en orden y todo o nada: si una falla, el diagrama no cambia. Cada operacion indica 'tool' (p. ej. add_node, update_node, add_connection, remove_node) y sus mismos parametros; tambien se acepta { tool, args: {...} }. Genera una sola revision y devuelve los ids creados en orden. Para operar en un nivel interno, cada operacion admite 'path'; add_node y add_connection aceptan 'id' explicito para referenciar lo creado en el mismo lote.")
+    public Map<String, Object> batch(
+            @McpToolParam(description = "Operaciones en orden, p. ej. [{ tool: \"add_node\", label: \"API\" }, { tool: \"add_connection\", from: \"n-1\", to: \"n-2\" }]", required = true) List<Map<String, Object>> operations,
+            @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
+            McpSchema.CallToolRequest request) {
+        rejectUnknownFields(request, Set.of("operations", "verbose"));
+        if (operations == null || operations.isEmpty()) {
+            throw new IllegalArgumentException("Indica al menos una operacion.");
+        }
+        return guarded(expectedRevision, () -> {
+            DiagramService real = svc();
+            if (needsAutoSnapshot(operations)) {
+                real.snapshotAuto(ORIGIN,
+                        "Antes de batch (" + operations.size() + " operaciones)");
+            }
+            DiagramService sandbox = sandbox(real.current(), real.room());
+            BatchOperations ops = new BatchOperations(sandbox, mapper);
+            List<Map<String, Object>> results = new ArrayList<>();
+            List<String> created = new ArrayList<>();
+            List<String> touched = new ArrayList<>();
+            for (int i = 0; i < operations.size(); i++) {
+                Map<String, Object> operation = operations.get(i);
+                BatchOperations.Outcome outcome;
+                try {
+                    outcome = ops.apply(operation);
+                } catch (RuntimeException ex) {
+                    throw new IllegalArgumentException("Operacion " + i + " ("
+                            + BatchOperations.toolName(operation) + ") fallo: " + ex.getMessage(), ex);
+                }
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("index", i);
+                item.put("tool", outcome.tool());
+                if (outcome.id() != null) {
+                    item.put("id", outcome.id());
+                }
+                if (outcome.ids() != null && !outcome.ids().isEmpty()) {
+                    item.put("ids", outcome.ids());
+                }
+                results.add(item);
+                if (outcome.created() && outcome.id() != null) {
+                    created.add(outcome.id());
+                }
+                if (outcome.id() != null) {
+                    touched.add(outcome.id());
+                }
+                if (outcome.ids() != null) {
+                    touched.addAll(outcome.ids());
+                }
+            }
+            DiagramData next = sandbox.current();
+            real.replace(next, ORIGIN, distinct(touched));
+            DiagramData data = real.current();
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", true);
+            out.put("revision", real.revision());
+            out.put("ids", created);
+            out.put("results", results);
+            out.put("counts", counts(data));
+            out.put("warnings", List.of());
+            if (Boolean.TRUE.equals(verbose)) {
+                out.put("diagram", data);
+            }
+            return out;
+        });
+    }
+
+    /** Servicio de trabajo sobre una copia: cada operacion no emite eventos ni toca la sala. */
+    private static DiagramService sandbox(DiagramData base, String room) {
+        InMemoryDiagramRepository repository = new InMemoryDiagramRepository();
+        repository.save(base);
+        return new DiagramService(repository, event -> {
+        }, room);
+    }
+
+    private static List<String> distinct(List<String> values) {
+        return List.copyOf(new LinkedHashSet<>(values));
+    }
+
+    /** Un batch grande o con una operacion destructiva guarda snapshot automatico. */
+    private static boolean needsAutoSnapshot(List<Map<String, Object>> operations) {
+        if (operations.size() >= BATCH_SNAPSHOT_THRESHOLD) {
+            return true;
+        }
+        for (Map<String, Object> operation : operations) {
+            String tool = BatchOperations.normalizedTool(operation);
+            if (BATCH_SNAPSHOT_TOOLS.contains(tool)) {
+                return true;
+            }
+            if ((tool.equals("remove_nodes") || tool.equals("remove_connections"))
+                    && argListSize(operation, "ids") >= 5) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int argListSize(Map<String, Object> operation, String key) {
+        Object value = operation.get(key);
+        if (value == null && operation.get("args") instanceof Map<?, ?> args) {
+            value = args.get(key);
+        }
+        return value instanceof List<?> list ? list.size() : 0;
     }
 
     // ------------------------------------------------------------------ nodos
@@ -349,6 +465,100 @@ public class DiagramMcpTools {
         out.put("issues", report.issues());
         out.put("revision", svc().revision());
         out.put("counts", counts(data));
+        if (Boolean.TRUE.equals(verbose)) {
+            out.put("diagram", data);
+        }
+        return out;
+    }
+
+    // ------------------------------------------------------------------ respaldo
+
+    @McpTool(name = "snapshot", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false, idempotentHint = false, openWorldHint = false), description = "Crea un snapshot con nombre para poder volver a este estado con restore. Los snapshots viven en memoria y se pierden al reiniciar el backend.")
+    public Map<String, Object> snapshot(
+            @McpToolParam(description = "Etiqueta del snapshot (por defecto Manual)", required = false) String label,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
+            McpSchema.CallToolRequest request) {
+        rejectUnknownFields(request, Set.of("label"));
+        DiagramService.SnapshotInfo info = guarded(expectedRevision,
+                () -> svc().snapshot(ORIGIN, label));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("snapshotId", info.id());
+        out.put("label", info.label());
+        out.put("revision", info.revision());
+        out.put("createdAt", info.createdAt());
+        out.put("auto", false);
+        out.put("counts", snapshotCounts(info));
+        return out;
+    }
+
+    @McpTool(name = "list_snapshots", annotations = @McpTool.McpAnnotations(readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false), description = "Lista los snapshots de la sala, del mas reciente al mas antiguo, con su etiqueta, revision, autor y tamano.")
+    public List<Map<String, Object>> listSnapshots() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (DiagramService.SnapshotInfo info : svc().snapshots()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("snapshotId", info.id());
+            item.put("label", info.label());
+            item.put("revision", info.revision());
+            item.put("createdAt", info.createdAt());
+            item.put("origin", info.origin());
+            item.put("auto", info.auto());
+            item.put("counts", snapshotCounts(info));
+            out.add(item);
+        }
+        return out;
+    }
+
+    @McpTool(name = "restore", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = true, idempotentHint = true, openWorldHint = false), description = "Restaura el diagrama al estado guardado en un snapshot. Genera una sola revision y un solo evento; el propio restore se puede deshacer con undo.")
+    public Map<String, Object> restore(
+            @McpToolParam(description = "Id del snapshot a restaurar", required = true) String snapshotId,
+            @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
+            McpSchema.CallToolRequest request) {
+        rejectUnknownFields(request, Set.of("snapshotId", "verbose"));
+        DiagramService.RestoreResult result = guarded(expectedRevision,
+                () -> svc().restore(ORIGIN, snapshotId));
+        DiagramData data = result.data();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("revision", svc().revision());
+        out.put("snapshotId", result.snapshot().id());
+        out.put("label", result.snapshot().label());
+        out.put("createdAt", result.snapshot().createdAt());
+        out.put("counts", counts(data));
+        out.put("warnings", List.of());
+        if (Boolean.TRUE.equals(verbose)) {
+            out.put("diagram", data);
+        }
+        return out;
+    }
+
+    @McpTool(name = "undo", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false, idempotentHint = false, openWorldHint = false), description = "Deshace los ultimos cambios del diagrama (por defecto 1). Devuelve el autor y la revision de cada cambio deshecho; usa list_snapshots o snapshot para puntos de restauracion con nombre.")
+    public Map<String, Object> undo(
+            @McpToolParam(description = "Numero de cambios a deshacer (por defecto 1)", required = false) Integer steps,
+            @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
+            @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
+            McpSchema.CallToolRequest request) {
+        rejectUnknownFields(request, Set.of("steps", "verbose"));
+        int count = steps == null ? 1 : steps;
+        DiagramService.UndoResult result = guarded(expectedRevision,
+                () -> svc().undo(ORIGIN, count));
+        DiagramData data = result.data();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("revision", result.revision());
+        out.put("steps", result.steps());
+        List<Map<String, Object>> undone = new ArrayList<>();
+        for (DiagramService.UndoEntry entry : result.undone()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("revision", entry.revision());
+            item.put("origin", entry.origin());
+            item.put("createdAt", entry.createdAt());
+            undone.add(item);
+        }
+        out.put("undone", undone);
+        out.put("counts", counts(data));
+        out.put("warnings", List.of());
         if (Boolean.TRUE.equals(verbose)) {
             out.put("diagram", data);
         }
@@ -733,8 +943,11 @@ public class DiagramMcpTools {
             @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
         rejectUnknownFields(request, Set.of("path", "data", "verbose"));
-        DiagramData level = mapper.convertValue(data, DiagramData.class);
-        guardedRun(expectedRevision, () -> svc().replaceLevel(ORIGIN, path, level));
+        DiagramData level = DiagramJson.convert(mapper, data, DiagramData.class);
+        guardedRun(expectedRevision, () -> {
+            svc().snapshotAuto(ORIGIN, "Antes de replace_level");
+            svc().replaceLevel(ORIGIN, path, level);
+        });
         String id = path == null || path.isEmpty() ? null : path.get(path.size() - 1);
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("path", path);
@@ -765,15 +978,23 @@ public class DiagramMcpTools {
 
     // ------------------------------------------------------------------ import/export
 
-    @McpTool(name = "import_diagram", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = true, idempotentHint = true, openWorldHint = false), description = "Reemplaza el diagrama completo. Acepta el contenido de un archivo .adraw/.json (con o sin envoltorio {format,version,diagram}). Devuelve un resumen compacto; usa verbose=true para el diagrama completo.")
+    @McpTool(name = "import_diagram", annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = true, idempotentHint = true, openWorldHint = false), description = "Importa el contenido de un archivo .adraw/.json (con o sin envoltorio {format,version,diagram}). Por defecto reemplaza el diagrama completo; con merge=true hace upsert por id en nodos, conexiones y niveles sin borrar lo que no venga en el JSON. Devuelve un resumen compacto; usa verbose=true para el diagrama completo.")
     public Map<String, Object> importDiagram(
             @McpToolParam(description = "JSON del proyecto", required = true) String json,
+            @McpToolParam(description = "Fusionar por id sin borrar lo existente (por defecto false: reemplaza todo)", required = false) Boolean merge,
             @McpToolParam(description = "Devolver el diagrama completo ademas del resumen", required = false) Boolean verbose,
             @McpToolParam(description = "Revision que el agente espera; si no coincide, la operacion falla con 409", required = false) Long expectedRevision,
             McpSchema.CallToolRequest request) {
-        rejectUnknownFields(request, Set.of("json", "verbose"));
-        guardedRun(expectedRevision, () -> svc().replace(parseDiagram(json), ORIGIN));
-        return mutationResult(null, null, null, verbose);
+        rejectUnknownFields(request, Set.of("json", "merge", "verbose"));
+        DiagramData data = DiagramJson.parse(mapper, json);
+        boolean doMerge = Boolean.TRUE.equals(merge);
+        guardedRun(expectedRevision, () -> {
+            svc().snapshotAuto(ORIGIN,
+                    doMerge ? "Antes de import_diagram (merge)" : "Antes de import_diagram");
+            svc().importDiagram(ORIGIN, data, doMerge);
+        });
+        Map<String, Object> extra = doMerge ? Map.of("merge", true) : null;
+        return mutationResult(null, null, extra, verbose);
     }
 
     @McpTool(name = "export_diagram", annotations = @McpTool.McpAnnotations(readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false), description = "Devuelve el diagrama serializado como archivo de proyecto. Formato: adraw | json. Con level exporta solo ese nivel; includeDocs=false omite las fichas Markdown (docUrl se conserva).")
@@ -828,6 +1049,15 @@ public class DiagramMcpTools {
         if (Boolean.TRUE.equals(verbose)) {
             out.put("diagram", data);
         }
+        return out;
+    }
+
+    /** Cuenta nodos, conexiones y niveles de un snapshot. */
+    private static Map<String, Object> snapshotCounts(DiagramService.SnapshotInfo info) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("nodes", info.nodes());
+        out.put("connections", info.connections());
+        out.put("levels", info.levels());
         return out;
     }
 
@@ -976,11 +1206,5 @@ public class DiagramMcpTools {
         file.put("type", "diagram");
         file.put("diagram", data);
         return file;
-    }
-
-    private DiagramData parseDiagram(String json) {
-        JsonNode root = mapper.readTree(json);
-        JsonNode diagram = root.has("diagram") ? root.get("diagram") : root;
-        return mapper.treeToValue(diagram, DiagramData.class);
     }
 }
